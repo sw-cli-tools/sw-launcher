@@ -1,0 +1,107 @@
+schema_version = 1
+
+[project]
+name = "pcode-hello"
+default_target = "cor24"
+default_scenario = "pcode-hello"
+
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+
+[targets.cor24.regions]
+sram      = { start = "0x000000", end = "0x0FFFFF" }
+ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
+mmio      = { start = "0xFF0000", end = "0xFFFFFF" }
+
+[memory_profiles.interpreter-only]
+description = "Runtime + interpreted source; modest heap."
+
+[[memory_profiles.interpreter-only.partitions]]
+name = "runtime"
+base = "0x000000"
+size = "0x010000"
+regions = [
+  { name = "code",         kind = "code",  size = "auto" },
+  { name = "embedded_eval", kind = "stack", size = "0x000400" },
+  { name = "embedded_call", kind = "stack", size = "0x000800" },
+  { name = "embedded_heap", kind = "heap",  size = "0x002000" },
+]
+
+[[memory_profiles.interpreter-only.partitions]]
+name = "image"
+base = "0x010000"
+size = "0x008000"
+regions = [
+  { name = "code", kind = "code", size = "auto" },
+]
+
+[memory_profiles.interpreter-only.budget]
+code_max  = "0x010000"
+heap_max  = "0x010000"
+stack_max = "0x004000"
+total_max = "0x028000"
+
+[scenarios.pcode-hello]
+target = "cor24"
+memory_profile = "interpreter-only"
+layers = ["pcode_vm", "pcode_app"]
+entry  = "0x000000"
+
+[scenarios.pcode-hello.run]
+mode       = "batch"
+timeout_ms = 5000
+max_cycles = 5000000
+halt_on    = "monitor-exit"
+
+[scenarios.pcode-hello.expect]
+uart_contains = ["HELLO"]
+exit_code     = 0
+
+[layers.pcode_vm]
+kind     = "assembler"
+input    = "vendor/sw-pcode/v0.1.0/bin/pvm.s"
+tool     = "assembler"
+artifact = "pvm.bin"
+exports  = { symbols = ["code_ptr", "eval_stack", "call_stack", "heap_seg"] }
+
+[layers.pcode_vm.load]
+method  = "memory"
+address = "0x000000"
+
+[[layers.pcode_vm.segments]]
+name     = "eval_stack"
+kind     = "stack"
+embedded = true
+symbol   = "eval_stack"
+size     = "0x000400"
+
+[[layers.pcode_vm.segments]]
+name     = "call_stack"
+kind     = "stack"
+embedded = true
+symbol   = "call_stack"
+size     = "0x000800"
+
+[[layers.pcode_vm.segments]]
+name     = "heap_seg"
+kind     = "heap"
+embedded = true
+symbol   = "heap_seg"
+size     = "0x002000"
+
+[layers.pcode_app]
+kind     = "pcode"
+input    = "examples/hello.spc"
+tool     = "pcode_assembler"
+artifact = "hello.p24"
+patches  = [
+  { target = "pcode_vm.code_ptr", value = "0x010000" },
+]
+
+[layers.pcode_app.load]
+method  = "memory"
+address = "0x010000"

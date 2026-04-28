@@ -1,0 +1,91 @@
+schema_version = 1
+
+[project]
+name = "echo-demo"
+default_target = "cor24"
+default_scenario = "echo"
+
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+
+[targets.cor24.regions]
+sram      = { start = "0x000000", end = "0x0FFFFF" }
+ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
+mmio      = { start = "0xFF0000", end = "0xFFFFFF" }
+
+[targets.cor24.run_defaults]
+stack_kilobytes = 3
+
+[memory_profiles.compiled-app]
+description = "Single image at 0; small heap; small stack."
+
+[[memory_profiles.compiled-app.partitions]]
+name = "code"
+base = "0x000000"
+size = "0x010000"
+regions = [
+  { name = "code",   kind = "code",  size = "auto" },
+  { name = "static", kind = "data",  size = "auto" },
+]
+
+[[memory_profiles.compiled-app.partitions]]
+name = "heap"
+base = "0x010000"
+size = "0x008000"
+regions = [
+  { name = "heap", kind = "heap", size = "0x008000" },
+]
+
+[[memory_profiles.compiled-app.partitions]]
+name = "stack"
+base = "0x018000"
+size = "0x002000"
+regions = [
+  { name = "stack", kind = "stack", size = "0x002000" },
+]
+
+[memory_profiles.compiled-app.budget]
+code_max  = "0x008000"
+heap_max  = "0x004000"
+stack_max = "0x002000"
+total_max = "0x010000"
+justification_required = true
+
+[scenarios.echo]
+target = "cor24"
+memory_profile = "compiled-app"
+layers = ["echo_program", "stdin_data"]
+entry  = "0x000000"
+
+[scenarios.echo.run]
+mode       = "batch"
+timeout_ms = 2000
+max_cycles = 200000
+halt_on    = "uart-eot"
+
+[scenarios.echo.expect]
+uart_contains = ["abc!"]
+exit_code     = 0
+
+[layers.echo_program]
+kind = "assembler"
+input = "src/echo.s"
+tool = "assembler"
+artifact = "echo.bin"
+
+[layers.echo_program.load]
+method  = "memory"
+address = "0x000000"
+
+[layers.stdin_data]
+kind = "data"
+input = "tests/echo-input.txt"
+
+[layers.stdin_data.load]
+method = "uart"
+max_bytes = 1024
+terminator = "EOT"

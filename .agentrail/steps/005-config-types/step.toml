@@ -1,6 +1,6 @@
 number = 5
 slug = "config-types"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 4: config-types
 
