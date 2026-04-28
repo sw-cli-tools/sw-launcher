@@ -1,0 +1,11 @@
+{
+  "task_type": "rust",
+  "state": {
+    "number": 8,
+    "step": "scenario-a-loadplan"
+  },
+  "action": "TDD red->green; iterated on TOML test fixture path issues (relative paths broke fs::read); split collect_layer into collect_memory + collect_uart to fit 50-LOC cap; inlined terminator_byte into collect_uart to fit 7-fn-per-module cap",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-28T16:29:51"
+}
