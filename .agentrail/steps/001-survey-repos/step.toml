@@ -1,6 +1,6 @@
 number = 1
 slug = "survey-repos"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 1: survey-repos
 
@@ -8,5 +8,6 @@ Produce a survey of how every working language repo o..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:20"
+completed_at = "2026-04-28T11:09:16"
 task_type = "docs"
-commits = []
+commits = ["71f2a39a0b8d0be66dffcb4b0b848808386daf76"]
