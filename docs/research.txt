@@ -1,0 +1,505 @@
+
+
+
+
+My AI coding agents spend too much time trying to run various tools I've built that usually involve running an emulator against .s code or .bin code.  But the code to be run has varying levels: straight assembler or code compiled to assembler or assembled binary.   If the code is an interpreter written in or compiled to assembler it needs source, either loaded via UART (if small) or pre-loaded into memory.  But what if the interpreter is a p-code VM, then it needs to load binary (only pre-loaded, not via UART).  But what if the p-code app itself needs to read a large source file, e.g., basic source, when the basic interpereter is written in pascal compiled to p-code.  But what the basic program is a smalltalk interpreter?  It needs to load the smalltalk source and what if the smalltalk source acts on data that also needs to be loaded.  But what if we have emu + p-code + OCaml.pcd + new-lang.txt + demo-in.txt?  Each AI needs to figure this out and they get creative and try things that do not work or are very slow, like re-compiling, re-asembling each part every time for every test or demo.    So what I want is (a) a name for a tool that organizes/caches/vendors/verisions this in a repeatable/reproducible way, and (b) the tool (a CLI)'s arguments and config file schema to cover all the use-cases with some error checking, caching, etc. 
+
+(a) naming. since this tool is only useful for cor24 emulator-related languages, it will be in the sw-embed org.  However, this tool is written in Rust and does not run on an emulated cor24 board.  So a language, say sw-cor24-basic or sw-cor24-ocaml follows a naming convention but sw-cor24-runner is misleading as it does not run on cor24 it runs things on cor24, so I need a different naming convenion.
+
+(b) each higher level project needs to vendor its lower level dependencies somehow. This could be the config file passed to the runner.  The runner may need to cache certain versions since different dependent language runners may be tested against different versions of a dependency.  Both smalltalk and new language tuplet depend on p-code VM but different versions.  Note that the tool will be installed under ~/.local or similar and has its own subdir/cache. 
+
+Help me describe a name and approach to delgate to a CLI AI Coding Agent to implement.
+
+I’ll frame this as a reproducible “execution artifact orchestration” problem: naming first, then CLI shape, config schema, cache/vendor model, and agent-facing implementation instructions.
+
+Thought for a couple of seconds
+Restated goal
+You need a host-side Rust CLI in sw-embed that makes COR24 emulator test/demo runs reproducible by declaring:
+
+toolchain stages: .txt → .pcd → .s → .bin
+
+runtime layers: emulator, monitor, VM, interpreter, app, input data
+
+load mechanisms: UART vs memory preload
+
+pinned versions of lower-level dependencies
+
+cached build/run artifacts so agents stop improvising
+
+Naming
+Avoid sw-cor24-runner because it sounds like it runs on COR24. Better convention:
+
+Best pick
+sw-cor24-launch
+
+Why:
+
+Host-side verb: it “launches” an emulated COR24 scenario.
+
+Doesn’t imply the tool itself is COR24 code.
+
+Works for demos, tests, and nested language stacks.
+
+Repo/package:
+
+sw-embed/sw-cor24-launch
+crate: sw-cor24-launch
+binary: cor24-launch
+Other good names
+Name	Pros	Cons
+sw-cor24-launch	Clear, short, host-side	Slightly generic
+sw-cor24-harness	Good for tests	Less demo-friendly
+sw-cor24-capsule	Captures packaged reproducible run	Less obvious as CLI
+sw-cor24-stackrun	Emphasizes layered stacks	A little clunky
+sw-cor24-orchestrator	Accurate	Too long
+sw-cor24-scenario	Emphasizes config-driven runs	Less verb-like
+sw-cor24-flightdeck	Nice metaphor for launch/control	Less plain
+My recommendation:
+
+repo: sw-embed/sw-cor24-launch
+binary: cor24-launch
+config files: cor24-launch.toml
+cache dir: ~/.cache/sw-cor24-launch/
+vendor dir: ~/.local/share/sw-cor24-launch/vendor/
+Core model
+Think of each runnable demo/test as a scenario.
+
+A scenario is not “run this file.” It is:
+
+Build or fetch these pinned layers, place artifacts into emulator memory/UART/devices, then run with these limits and expected outputs.
+
+Example stack:
+
+cor24 emulator
+  + monitor.bin
+  + pcode_vm.bin
+  + ocaml.pcd
+  + new-lang.txt
+  + demo-in.txt
+Each layer declares:
+
+its kind: assembler, binary, pcode, source, data
+
+how it is produced
+
+how it is loaded
+
+whether it is cached
+
+version/source identity
+
+memory address or device channel
+
+CLI shape
+cor24-launch run <scenario>
+cor24-launch build <scenario>
+cor24-launch check <scenario>
+cor24-launch clean [--scenario <name>] [--all]
+cor24-launch cache list
+cor24-launch cache explain <scenario>
+cor24-launch vendor sync
+cor24-launch vendor status
+cor24-launch graph <scenario>
+cor24-launch doctor
+Common flags
+-c, --config cor24-launch.toml
+--profile demo|test|debug
+--no-cache
+--rebuild <layer-name>
+--explain
+--dry-run
+--trace-loads
+--trace-tools
+--timeout 10s
+--seed 1234
+Agent-friendly examples
+cor24-launch run fib-basic-demo
+cor24-launch run ocaml-newlang-demo --profile test
+cor24-launch check smalltalk-on-basic
+cor24-launch cache explain ocaml-newlang-demo
+cor24-launch graph ocaml-newlang-demo
+The important rule:
+
+Agents should never call assembler, compiler, emulator, p-code tools, or UART loaders directly unless developing those tools. They call cor24-launch.
+
+Config schema sketch
+Use TOML first. It is readable, Rust-friendly, and easy for agents.
+
+schema_version = 1
+
+[project]
+name = "sw-cor24-ocaml"
+root = "."
+default_scenario = "ocaml-newlang-demo"
+
+[cache]
+enabled = true
+namespace = "sw-cor24-ocaml"
+mode = "content-addressed"
+
+[vendor]
+lockfile = "cor24-launch.lock"
+directory = ".cor24/vendor"
+
+[tools.emulator]
+kind = "host-binary"
+path = "../sw-cor24-emu/target/release/cor24-emu"
+version_command = ["../sw-cor24-emu/target/release/cor24-emu", "--version"]
+
+[tools.assembler]
+kind = "host-binary"
+path = "../a24-sw/target/release/a24"
+version_command = ["../a24-sw/target/release/a24", "--version"]
+
+[tools.pcode_compiler]
+kind = "host-binary"
+path = "../pascal-sw/target/release/pascal-pcode"
+version_command = ["../pascal-sw/target/release/pascal-pcode", "--version"]
+Layer declarations
+[layers.monitor]
+kind = "binary"
+source = "vendor:sw-cor24-monitor@v0.3.1"
+artifact = "monitor.bin"
+load.method = "memory"
+load.address = "0x000000"
+
+[layers.pcode_vm]
+kind = "assembler"
+source = "vendor:sw-cor24-pcode-vm@v0.7.0"
+input = "src/vm.s"
+tool = "assembler"
+artifact = "pcode-vm.bin"
+load.method = "memory"
+load.address = "0x001000"
+
+[layers.ocaml_pcode]
+kind = "pcode"
+source = "local"
+input = "examples/ocaml.pcd"
+artifact = "ocaml.pcd"
+load.method = "memory"
+load.address = "0x008000"
+
+[layers.new_lang_source]
+kind = "text"
+input = "examples/new-lang.txt"
+load.method = "uart"
+load.max_bytes = 4096"
+
+[layers.demo_input]
+kind = "text"
+input = "examples/demo-in.txt"
+load.method = "memory"
+load.address = "0x00C000"
+Scenario declaration
+[scenarios.ocaml-newlang-demo]
+description = "Run OCaml p-code app that interprets new-lang source and consumes demo input."
+
+layers = [
+  "monitor",
+  "pcode_vm",
+  "ocaml_pcode",
+  "new_lang_source",
+  "demo_input"
+]
+
+entry = "0x001000"
+
+[scenarios.ocaml-newlang-demo.run]
+timeout_ms = 5000
+max_cycles = 2000000
+halt_on = "monitor-exit"
+
+[scenarios.ocaml-newlang-demo.expect]
+stdout_contains = [
+  "NEWLANG READY",
+  "demo complete"
+]
+exit_code = 0
+Versioning and vendoring model
+Each dependency should resolve to an immutable-ish artifact identity:
+
+[dependencies.sw-cor24-pcode-vm]
+source = "git"
+repo = "https://github.com/softwarewrighter/sw-cor24-pcode-vm"
+rev = "8f42abc"
+artifact = "target/cor24/pcode-vm.bin"
+
+[dependencies.sw-cor24-monitor]
+source = "git"
+repo = "https://github.com/softwarewrighter/sw-cor24-monitor"
+tag = "v0.3.1"
+artifact = "build/monitor.bin"
+Generate lockfile:
+
+[[locked]]
+name = "sw-cor24-pcode-vm"
+rev = "8f42abc..."
+artifact_hash = "sha256:..."
+cached_path = "~/.cache/sw-cor24-launch/artifacts/..."
+Rules:
+
+config declares intent
+
+lockfile records exact resolved versions
+
+cache stores built artifacts by hash
+
+vendor directory stores source snapshots or checked-out dependencies
+
+scenario run uses lockfile unless --update-lock is explicit
+
+Cache key
+Cache key should include:
+
+tool path/version/hash
+input file hashes
+dependency artifact hashes
+build args
+target profile
+load address if artifact is address-sensitive
+schema version
+For each layer:
+
+layer_key = sha256(
+  layer_config_normalized +
+  input_hashes +
+  tool_version +
+  dependency_hashes
+)
+Error checking
+The CLI should reject:
+
+UART load larger than configured max_bytes
+
+overlapping memory loads
+
+missing tool paths
+
+dirty/unlocked dependency versions unless allowed
+
+source type loaded by impossible method
+
+p-code app loaded without a VM layer
+
+interpreter source missing when interpreter layer declares it required
+
+cyclic layer dependencies
+
+stale lockfile
+
+binary artifact without known hash
+
+scenario without termination condition
+
+Useful diagnostics:
+
+error: layer demo_input overlaps with ocaml_pcode
+  demo_input: 0x00C000..0x00D2A0
+  ocaml_pcode: 0x008000..0x00CFFF
+suggestion: move demo_input to 0x00D000
+Minimum viable implementation
+Tell the agent to implement in this order:
+
+Parse cor24-launch.toml.
+
+Validate scenarios and layers.
+
+Compute content hashes.
+
+Build a DAG of layers.
+
+Implement dry-run/explain.
+
+Implement cache directory layout.
+
+Implement memory load plan generation.
+
+Invoke emulator with a generated manifest.
+
+Capture stdout/stderr/trace.
+
+Check expectations.
+
+Suggested internal Rust modules
+src/
+  main.rs
+  cli.rs
+  config.rs
+  validate.rs
+  graph.rs
+  cache.rs
+  vendor.rs
+  tool.rs
+  layer.rs
+  scenario.rs
+  manifest.rs
+  run.rs
+  expect.rs
+  error.rs
+Keep main.rs thin.
+
+Agent delegation prompt
+Implement sw-embed/sw-cor24-launch, a Rust host-side CLI named cor24-launch.
+
+Purpose:
+AI coding agents must use this tool instead of manually invoking assemblers,
+compilers, p-code tools, UART loaders, or the COR24 emulator. The tool reads
+cor24-launch.toml, resolves pinned dependency layers, caches build artifacts,
+constructs a deterministic emulator load manifest, runs the emulator, and checks
+expected output.
+
+Core commands:
+- cor24-launch check <scenario>
+- cor24-launch build <scenario>
+- cor24-launch run <scenario>
+- cor24-launch graph <scenario>
+- cor24-launch cache list
+- cor24-launch cache explain <scenario>
+- cor24-launch vendor sync
+- cor24-launch vendor status
+- cor24-launch doctor
+
+Implement first:
+- TOML config parsing
+- scenario/layer validation
+- content-addressed cache keys
+- dry-run and explain output
+- memory overlap checking
+- UART size checking
+- generated run manifest
+- emulator invocation
+- stdout expectation checks
+
+Do not implement complex dependency fetching first. Stub vendor resolution with
+local paths and exact revisions, but design the schema so git/tag/rev vendoring
+can be added later.
+
+Use Rust 2024, clap, serde, toml, camino, sha2, thiserror, anyhow, petgraph,
+assert_cmd tests, and insta or similar snapshot tests.
+
+The tool itself runs on the host, not on COR24. Name the repo
+sw-embed/sw-cor24-launch and the binary cor24-launch.
+The key design principle
+Make the “creative” part declarative:
+
+cor24-launch run ocaml-newlang-demo
+not procedural:
+
+build VM, assemble it, compile app, preload memory, feed UART, run emulator...
+That gives each AI agent one boring, repeatable entry point.
+
+
+cor24-launch (sw-cor24-launch) is too similar to things that run on cor24 not written in Rust.  I'm thinking we may a more neutral name and extend this tool to run other things (I will be working on porting sw-cor24-forth to sw-1130-forth or sw-1802-forth or sw-riscvi32-forth).  Maybe I can move this repo from sw-emed org to sw-cli-tools org.  I think it would help to be conceptually sw-launch-cor24 but this restricts the tool to one target platform.  So maybe names along the lines of: sw-cli-tools/sw-launcher
+
+Yes — move it to sw-cli-tools and make COR24 just the first backend/target.
+
+Best name
+repo: sw-cli-tools/sw-launcher
+binary: sw-launch
+Why this works:
+
+Neutral host-side tool
+
+Not tied to COR24
+
+Reads well for future targets:
+
+sw-launch run cor24:ocaml-newlang-demo
+sw-launch run 1130:forth-demo
+sw-launch run 1802:forth-demo
+sw-launch run riscv32:forth-demo
+Better conceptual model
+Instead of “COR24 runner,” make it:
+
+A reproducible launch harness for layered emulator/toolchain scenarios.
+
+So the hierarchy becomes:
+
+sw-launch
+  target: cor24
+    platform: emulator
+    layers: monitor, vm, interpreter, app, data
+  target: ibm1130
+    platform: emulator/fpga
+    layers: forth, block image, source, data
+  target: 1802
+    platform: emulator/board
+    layers: monitor, forth, app
+  target: riscv32
+    platform: qemu/fpga/emulator
+    layers: runtime, app, input
+Naming options
+Repo	Binary	Notes
+sw-cli-tools/sw-launcher	sw-launch	Best overall
+sw-cli-tools/sw-harness	sw-harness	More test-oriented
+sw-cli-tools/sw-lablaunch	sw-lablaunch	Nice for emulator/FPGA lab
+sw-cli-tools/sw-stage	sw-stage	Good metaphor: stage artifacts then run
+sw-cli-tools/sw-scenario	sw-scenario	Config-driven, less executable-sounding
+sw-cli-tools/sw-capsule	sw-capsule	Good for reproducible bundles
+My pick:
+
+sw-cli-tools/sw-launcher
+with executable:
+
+sw-launch
+Config rename
+Use neutral names:
+
+sw-launch.toml
+sw-launch.lock
+.sw-launch/
+~/.cache/sw-launch/
+~/.local/share/sw-launch/
+Target-aware config sketch
+schema_version = 1
+
+[project]
+name = "sw-cor24-ocaml"
+default_target = "cor24"
+default_scenario = "ocaml-newlang-demo"
+
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+
+[targets.ibm1130]
+kind = "emulator"
+word_bits = 16
+address_bits = 16
+loader = "card-or-disk-image"
+
+[scenarios.ocaml-newlang-demo]
+target = "cor24"
+layers = [
+  "cor24-monitor",
+  "cor24-pcode-vm",
+  "ocaml-pcode",
+  "new-lang-source",
+  "demo-input"
+]
+CLI shape
+sw-launch run ocaml-newlang-demo
+sw-launch run --target cor24 ocaml-newlang-demo
+sw-launch check --target cor24 ocaml-newlang-demo
+sw-launch graph ocaml-newlang-demo
+sw-launch cache explain ocaml-newlang-demo
+sw-launch vendor sync
+For future namespacing:
+
+sw-launch run cor24/ocaml-newlang-demo
+sw-launch run ibm1130/forth-block-demo
+sw-launch run 1802/forth-demo
+Implementation framing for the agent
+Use this sentence:
+
+sw-launch is a host-side reproducible scenario launcher for emulator, FPGA, and cross-toolchain workflows. Targets such as COR24, IBM 1130, RCA 1802, and RISC-V are plugins/backends described by config, not hard-coded into the tool name.
+
+That gives you room to grow without renaming later.
+
+
+
+
