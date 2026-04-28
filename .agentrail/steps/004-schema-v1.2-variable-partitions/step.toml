@@ -1,6 +1,6 @@
 number = 4
 slug = "schema-v1.2-variable-partitions"
-status = "in-progress"
+status = "completed"
 description = """
 # Step: schema-v1.2-variable-partitions
 
@@ -8,5 +8,6 @@ User design pivot received after ste..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T12:14:40"
+completed_at = "2026-04-28T12:24:34"
 task_type = "docs"
-commits = []
+commits = ["631087c06fa203e32ab13f1a578ee2713b1bfb86"]

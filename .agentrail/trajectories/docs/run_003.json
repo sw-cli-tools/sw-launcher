@@ -1,0 +1,11 @@
+{
+  "task_type": "docs",
+  "state": {
+    "number": 4,
+    "step": "schema-v1.2-variable-partitions"
+  },
+  "action": "stance doc set the prior (1980s machines did real work in <256 KiB), per-repo analysis identified ocaml/macrolisp/plsw as the bloat hotspots, profile budgets sized to flag bloat without starving REPLs",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-28T12:24:34"
+}
