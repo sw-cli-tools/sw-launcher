@@ -1,6 +1,6 @@
 number = 2
 slug = "revise-schema"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 2: revise-schema
 
@@ -8,5 +8,6 @@ Take the gaps surfaced by step 1's `docs/survey/sche..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:20"
+completed_at = "2026-04-28T11:29:12"
 task_type = "docs"
-commits = []
+commits = ["639d97f8dc91d06ff1d66d11cac8eba57e46d3f4"]
