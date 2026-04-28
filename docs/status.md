@@ -19,11 +19,107 @@ Last updated: 2026-04-28
 | 0     | Survey existing repo layouts           | done 2026-04-28 |
 | 0.5   | Schema v1.1 (fixed 8x128 KiB grid)     | done 2026-04-28 |
 | 0.6   | Schema v1.2 (named memory profiles)    | done 2026-04-28 |
-| 1     | Skeleton + Scenario A                  | scaffold landed; Scenario A not started |
-| 2     | Scenario B (runtime + binary)          | not started     |
+| 1     | Skeleton + Scenario A end-to-end       | done 2026-04-28 |
+| 2     | Scenario B (runtime + binary)          | not started; plan in docs/saga-phase2-plan.md |
 | 3     | Scenario C (nested interpreter)        | not started     |
 | 4     | Caching, vendor sync, doctor, graph    | not started     |
 | 5     | Multi-target stubs (deferred)          | not started     |
+
+## Phase 1 closure (2026-04-28)
+
+Phase 1 saga (`sw-launcher-phase1`, 10 steps) closed cleanly. End
+state:
+
+- `sw-launch run echo --config tests/fixtures/scenario_a/sw-launch.toml`
+  exits 0, prints "A" on stdout (the captured UART output).
+- `sw-launch check echo` validates the scenario without spawning
+  the emulator.
+- `sw-launch build echo` assembles every assembler-kind layer
+  under `<config-dir>/.sw-launch/build/<scenario>/<layer>/`.
+- 60 tests across 11 binaries, including 2 end-to-end against the
+  real `cor24-run` binary, all green.
+
+### Versions the Phase 1 integration tests ran against
+
+| component                | version                              |
+|--------------------------|--------------------------------------|
+| `cor24-run`              | 0.1.0 (Copyright (c) 2026 Michael A Wright; MIT) |
+| Rust toolchain           | rustc 1.94.1 (e408947bf 2026-03-25)  |
+| edition                  | 2024                                 |
+| host                     | darwin (Darwin 24.6.0, manager)      |
+
+### Steps closed in this saga
+
+1. `001-survey-repos` -- 13 per-repo surveys + index + schema gaps
+   + tuplet failure hypothesis + monitor-shell feasibility +
+   partition-model proposal + web/memory-layouts/index.html.
+2. `002-revise-schema` -- design.md v1.1: addressing model,
+   composite/uart-preamble/uart-prebuffer/snapshot/regenerated
+   layer kinds, run modes, programs slot table, shared regions,
+   conditional loads, tool model, sidecar/upstream-symbol patches,
+   Scenario D + E examples, validation codes E0017..E0027.
+3. `003-scaffold-cli` -- clap-driven binary, error + ErrorCode,
+   `--version` with build-info, `--help` with AI agent section,
+   14 integration tests + unit tests.
+4. `004-schema-v1.2-variable-partitions` (inserted) --
+   docs/heap-analysis.md grounding budgets in historical
+   benchmarks; design.md replaces fixed grid with named memory
+   profiles + `heap_justification` + budgets E0028..E0034.
+5. `005-config-types` -- typed Config tree mirroring v1.2 with
+   strict deserialization, `HexValue` / `SizeOrAuto`, fixtures
+   for Scenarios A and B.
+6. `006-scenario-validate` -- 17 stable error codes implemented
+   with one negative test each; `cli::check` wired up.
+7. `007-assembler-tool` -- cor24-run `--assemble` wrapper with
+   in-process memoization (sha256 cache key) + listing parser
+   handling trailing labels (BSS / .skip).
+8. `008-scenario-a-loadplan` -- `LoadPlan::build` + `cor24_argv`
+   with deterministic ordering; embedded segments tracked but
+   not loaded; 5 snapshot/ordering tests.
+9. `009-scenario-a-runner` -- `cli::run` orchestrates
+   validate -> assemble -> plan -> spawn -> capture UART ->
+   check expectations; `regex` dep for `uart_regex`; 2 end-to-end
+   tests against real `cor24-run`.
+10. `010-phase1-status` -- this entry; closes the saga and
+    drafts `docs/saga-phase2-plan.md`.
+
+### What runs today
+
+```bash
+cd tests/fixtures/scenario_a
+sw-launch run echo
+# -> "A"
+# exit 0
+```
+
+### Outstanding sw-checklist failures (carried into Phase 2)
+
+These are documented structural trade-offs, not regressions; see
+the step 006 / 008 commit messages for rationale:
+
+- `validate.rs` File LOC: 642 (max 500). Splitting forces
+  Crate Module Count over its own cap; the 17-rule validation
+  surface doesn't decompose cleanly into smaller files.
+- `validate.rs` Module Function Count: 20 (max 7). Same root.
+- Crate Module Count: 8 (max 7). `manifest.rs` is a genuinely
+  separate concern between Config/validate and the runtime
+  emitter. Folding it into any existing module pushes that
+  module over its own per-file budgets.
+
+Phase 2 may break the validation logic into a sub-crate (e.g.
+`sw-launcher-validate`) once the rule count grows further; until
+then, the documentation in step commits is the contract.
+
+## What's next
+
+Phase 2 (`sw-launcher-phase2`) is described in
+[`docs/saga-phase2-plan.md`](saga-phase2-plan.md). It adds
+Scenario B: COR24 runtime at 0 plus a p-code blob at a higher
+address with a `code_ptr` patch -- the smallest meaningful test
+that the launcher can express the layered shape that today's
+sw-cor24-pcode and sw-cor24-pascal demos use. After Phase 2,
+Phase 3 adds Scenario C (nested interpreter, source via UART,
+heap-limit-only patches) which is the tuplet shape.
 
 ## Schema v1.1 (2026-04-28)
 

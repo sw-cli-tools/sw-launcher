@@ -72,10 +72,17 @@ lockfile.
 
 ## Status
 
-Pre-implementation. Documentation and the initial agentrail saga are
-in place. See [`docs/status.md`](docs/status.md) for the live phase
-tracker. The first session should run `agentrail next` and follow
-the protocol in [`CLAUDE.md`](CLAUDE.md).
+**Phase 1 complete (2026-04-28)**: Scenario A runs end to end.
+`sw-launch run echo` against the canonical fixture
+(`tests/fixtures/scenario_a/sw-launch.toml`) builds, executes
+under real `cor24-run`, and asserts UART output. 60 tests across
+11 binaries pass; check / build / run subcommands are wired up.
+
+Phase 2 (Scenario B: COR24 runtime + p-code blob with `code_ptr`
+patch) is described in
+[`docs/saga-phase2-plan.md`](docs/saga-phase2-plan.md). See
+[`docs/status.md`](docs/status.md) for the live phase tracker
+and the Phase 1 closure summary.
 
 ## Documentation
 
