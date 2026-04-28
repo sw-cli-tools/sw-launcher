@@ -1,12 +1,12 @@
 number = 9
-slug = "phase1-status"
+slug = "scenario-a-runner"
 status = "pending"
 description = """
-# Step 9: phase1-status
+# Step 8: scenario-a-runner
 
-Close out Phase 1 of the saga. Update status doc, dr..."""
+Wire `sw-launch run <scenario>` end-to-end for S..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:25"
-task_type = "docs"
+task_type = "rust"
 commits = []

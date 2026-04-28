@@ -1,10 +1,10 @@
-number = 4
-slug = "config-types"
+number = 8
+slug = "scenario-a-loadplan"
 status = "pending"
 description = """
-# Step 4: config-types
+# Step 7: scenario-a-loadplan
 
-Add the typed `Config` model that mirrors the schema ..."""
+Translate a validated Scenario A into a determ..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:25"

@@ -1,10 +1,10 @@
-number = 8
-slug = "scenario-a-runner"
+number = 6
+slug = "scenario-validate"
 status = "pending"
 description = """
-# Step 8: scenario-a-runner
+# Step 5: scenario-validate
 
-Wire `sw-launch run <scenario>` end-to-end for S..."""
+Implement the validators listed as E0001..E0016 ..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:25"

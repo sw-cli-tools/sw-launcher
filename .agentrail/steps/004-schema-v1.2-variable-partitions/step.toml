@@ -1,0 +1,12 @@
+number = 4
+slug = "schema-v1.2-variable-partitions"
+status = "pending"
+description = """
+# Step: schema-v1.2-variable-partitions
+
+User design pivot received after ste..."""
+role = "production"
+context_files = []
+created_at = "2026-04-28T12:14:40"
+task_type = "docs"
+commits = []
