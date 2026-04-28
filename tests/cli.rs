@@ -49,12 +49,15 @@ fn run_with_no_scenario_fails_and_mentions_scenario() {
 }
 
 #[test]
-fn run_with_scenario_returns_not_implemented() {
+fn run_with_missing_config_fails_cleanly() {
+    // run is wired up as of step 009; without a config file it
+    // should surface an I/O / cli error code, not the
+    // "not yet implemented" sentinel.
     cmd()
-        .args(["run", "nonexistent"])
+        .args(["run", "any", "--config", "no-such-file.toml"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0091").or(contains("E0092")));
 }
 
 #[test]

@@ -47,7 +47,10 @@ pub struct BuildOutput {
 
 /// Wraps `cor24-run --assemble <input> <out.bin> <out.lst>`.
 pub struct Assembler {
-    tool_path: Utf8PathBuf,
+    /// The host binary (`cor24-run`). Public so callers can reuse
+    /// the same path for the emulator-spawn side of step 009 without
+    /// re-resolving.
+    pub tool_path: Utf8PathBuf,
     cache: HashMap<CacheKey, BuildOutput>,
     /// Number of times the tool has actually been spawned by this
     /// `Assembler` instance. Tests use it to verify memoization.

@@ -1,0 +1,41 @@
+schema_version = 1
+
+[project]
+name = "echo-demo"
+default_target = "cor24"
+default_scenario = "echo"
+
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+
+[targets.cor24.regions]
+sram      = { start = "0x000000", end = "0x0FFFFF" }
+ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
+mmio      = { start = "0xFF0000", end = "0xFFFFFF" }
+
+[scenarios.echo]
+target = "cor24"
+layers = ["echo_program"]
+entry  = "0x000000"
+
+[scenarios.echo.run]
+mode       = "batch"
+timeout_ms = 2000
+max_cycles = 1000
+halt_on    = "uart-eot"
+
+[scenarios.echo.expect]
+uart_contains = ["A"]
+
+[layers.echo_program]
+kind = "assembler"
+input = "echo.s"
+artifact = "echo.bin"
+
+[layers.echo_program.load]
+method  = "memory"
+address = "0x000000"

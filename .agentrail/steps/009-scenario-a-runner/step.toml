@@ -1,6 +1,6 @@
 number = 9
 slug = "scenario-a-runner"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 8: scenario-a-runner
 

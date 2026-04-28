@@ -432,6 +432,7 @@ dependencies = [
  "camino",
  "clap",
  "predicates",
+ "regex",
  "serde",
  "sha2",
  "thiserror",

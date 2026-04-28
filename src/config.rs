@@ -179,7 +179,7 @@ fn default_true() -> bool {
 }
 
 /// `[scenarios.<name>]` block.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub target: String,
@@ -195,7 +195,7 @@ pub struct Scenario {
 }
 
 /// `[scenarios.<n>.run]`.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RunCfg {
     #[serde(default)]
@@ -211,7 +211,7 @@ pub struct RunCfg {
 }
 
 /// `[scenarios.<n>.expect]`.
-#[derive(Debug, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Expect {
     #[serde(default)]

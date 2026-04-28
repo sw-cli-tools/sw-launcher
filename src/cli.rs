@@ -4,12 +4,16 @@
 //! Every subcommand currently returns `Error::not_implemented`;
 //! later steps replace each stub with the real action.
 
-use camino::Utf8PathBuf;
+use std::collections::BTreeMap;
+use std::process::Command;
+
+use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 
-use crate::config::Config;
+use crate::config::{Config, Expect, Scenario};
 use crate::error::{Error, Result};
-use crate::tool::{Assembler, BuildJob};
+use crate::manifest::{ArtifactEntry, Artifacts, LoadPlan};
+use crate::tool::{Assembler, BuildJob, Listing};
 use crate::validate;
 
 /// Long version string with copyright, license, repo, build host /
@@ -125,6 +129,9 @@ pub enum Commands {
     Run {
         /// Name of the scenario in `sw-launch.toml`.
         scenario: String,
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
     },
     /// Build all layers of a scenario; do not execute.
     Build {
@@ -187,7 +194,7 @@ pub enum VendorAction {
 /// Dispatch a parsed `Cli` to the appropriate handler.
 pub fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::Run { .. } => Err(Error::not_implemented("run")),
+        Commands::Run { scenario, config } => run_scenario(&config, &scenario),
         Commands::Build { scenario, config } => build_scenario(&config, &scenario),
         Commands::Check { scenario, config } => check_scenario(&config, &scenario),
         Commands::Graph { .. } => Err(Error::not_implemented("graph")),
@@ -204,11 +211,184 @@ pub fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
+/// `sw-launch run <scenario>` end to end:
+/// validate -> assemble layers (with memoization) -> LoadPlan ->
+/// spawn cor24-run -> capture UART -> check expectations.
+fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
+    let cfg = Config::from_path(config_path)?;
+    let scen = cfg
+        .scenarios
+        .get(scenario)
+        .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?
+        .clone();
+    if let Err(diags) = validate::validate(&cfg, scenario) {
+        for d in &diags {
+            eprintln!("{d}");
+        }
+        return Err(Error::cli("validation failed; run aborted".to_string()));
+    }
+    let mut asm = Assembler::from_path()?;
+    let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
+    let plan = LoadPlan::build(&cfg, scenario, &artifacts)?;
+    let (uart, exit_code) = run_emulator(&asm.tool_path, &plan, &scen)?;
+    if let Some(expect) = &scen.expect {
+        check_expectations(expect, &uart, exit_code)?;
+    }
+    println!("{uart}");
+    Ok(())
+}
+
+/// Assemble every assembler-kind layer in `scenario` and return a
+/// map of name -> (built artifact path, parsed listing). Layer
+/// `input` paths in TOML are interpreted relative to the config
+/// file's directory (matching how every survey-repo run script
+/// behaves).
+fn assemble_artifacts(
+    cfg: &Config,
+    scen: &Scenario,
+    scenario_name: &str,
+    config_path: &Utf8Path,
+    asm: &mut Assembler,
+) -> Result<Artifacts> {
+    let cfg_dir: Utf8PathBuf = config_path
+        .parent()
+        .map(Utf8PathBuf::from)
+        .unwrap_or_else(|| Utf8PathBuf::from("."));
+    let out_root = cfg_dir.join(".sw-launch").join("build").join(scenario_name);
+    let mut by_layer: BTreeMap<String, ArtifactEntry> = BTreeMap::new();
+    for layer_name in &scen.layers {
+        let Some(layer) = cfg.layers.get(layer_name) else {
+            continue;
+        };
+        if layer.kind != "assembler" {
+            continue;
+        }
+        let Some(input) = layer.input.as_deref() else {
+            continue;
+        };
+        let resolved_input: Utf8PathBuf = if Utf8Path::new(input).is_absolute() {
+            Utf8PathBuf::from(input)
+        } else {
+            cfg_dir.join(input)
+        };
+        let layer_dir = out_root.join(layer_name);
+        let job = BuildJob {
+            layer_name: layer_name.clone(),
+            input: resolved_input,
+            output_bin: layer_dir.join(format!("{layer_name}.bin")),
+            output_lst: layer_dir.join(format!("{layer_name}.lst")),
+            extra_args: Vec::new(),
+        };
+        let out = asm.build(&job)?;
+        let lst_text = std::fs::read_to_string(out.listing.as_std_path()).unwrap_or_default();
+        by_layer.insert(
+            layer_name.clone(),
+            ArtifactEntry {
+                artifact: out.artifact,
+                listing: Listing::parse(&lst_text),
+            },
+        );
+    }
+    Ok(Artifacts { by_layer })
+}
+
+/// Spawn `cor24-run` with the resolved argv plus run-config
+/// flags (`--time`, `-n`); capture stdout; extract UART and exit
+/// code. Trusts cor24-run's `--time` for runtime budget; a
+/// host-side wall timeout is step-010 work.
+fn run_emulator(tool_path: &Utf8Path, plan: &LoadPlan, scen: &Scenario) -> Result<(String, i32)> {
+    let mut cmd = Command::new(tool_path.as_std_path());
+    cmd.args(plan.cor24_argv());
+    cmd.args(["--speed", "0"]);
+    if let Some(run) = &scen.run {
+        if let Some(n) = run.max_cycles {
+            cmd.args(["-n", &n.to_string()]);
+        }
+        if let Some(ms) = run.timeout_ms {
+            let secs = (ms / 1000).max(1);
+            cmd.args(["--time", &secs.to_string()]);
+        }
+    }
+    let output = cmd.output().map_err(|source| Error::Io { source })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut uart = String::new();
+    let mut in_block = false;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("UART output: ") {
+            uart.push_str(rest);
+            uart.push('\n');
+            in_block = true;
+        } else if line.starts_with("Executed ") {
+            in_block = false;
+        } else if in_block {
+            uart.push_str(line);
+            uart.push('\n');
+        }
+    }
+    Ok((
+        uart.trim_end().to_string(),
+        output.status.code().unwrap_or(-1),
+    ))
+}
+
+/// Run all expectation matchers; return Err(Cli) if any fail
+/// with a human-readable mismatch report.
+fn check_expectations(expect: &Expect, uart: &str, exit_code: i32) -> Result<()> {
+    let mut mismatches: Vec<String> = Vec::new();
+    for needle in &expect.uart_contains {
+        if !uart.contains(needle) {
+            mismatches.push(format!(
+                "uart_contains: expected substring {needle:?} not found"
+            ));
+        }
+    }
+    for forbidden in &expect.uart_not_contains {
+        if uart.contains(forbidden) {
+            mismatches.push(format!(
+                "uart_not_contains: forbidden substring {forbidden:?} appeared"
+            ));
+        }
+    }
+    for pat in &expect.uart_regex {
+        match regex::Regex::new(pat) {
+            Ok(re) => {
+                if !re.is_match(uart) {
+                    mismatches.push(format!("uart_regex: pattern {pat:?} did not match"));
+                }
+            }
+            Err(e) => {
+                mismatches.push(format!(
+                    "uart_regex: pattern {pat:?} failed to compile: {e}"
+                ));
+            }
+        }
+    }
+    if let Some(want) = expect.exit_code
+        && want != exit_code
+    {
+        mismatches.push(format!("exit_code: expected {want}, got {exit_code}"));
+    }
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        for m in &mismatches {
+            eprintln!("expectation mismatch: {m}");
+        }
+        eprintln!("--- captured UART ---");
+        eprintln!("{uart}");
+        eprintln!("--- end UART ---");
+        Err(Error::cli(format!(
+            "{} expectation(s) failed",
+            mismatches.len()
+        )))
+    }
+}
+
 /// Implementation of `sw-launch build <scenario>`. Loads config,
 /// finds every assembler-kind layer with an `input` set, builds
 /// it via `Assembler` (with in-process memoization), prints the
 /// resulting artifact path to stdout. No emulator is spawned.
-fn build_scenario(config_path: &camino::Utf8Path, scenario: &str) -> Result<()> {
+fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
     let cfg = Config::from_path(config_path)?;
     let scen = cfg
         .scenarios
@@ -248,7 +428,7 @@ fn build_scenario(config_path: &camino::Utf8Path, scenario: &str) -> Result<()> 
 /// Implementation of `sw-launch check <scenario>`. Loads the
 /// config, runs `validate::validate`, prints every diagnostic to
 /// stderr, returns Ok if the scenario validated cleanly.
-fn check_scenario(config_path: &camino::Utf8Path, scenario: &str) -> Result<()> {
+fn check_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
     let cfg = Config::from_path(config_path)?;
     match validate::validate(&cfg, scenario) {
         Ok(warnings) => {
