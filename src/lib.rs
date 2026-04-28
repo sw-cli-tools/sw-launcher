@@ -10,6 +10,15 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod tool;
 pub mod validate;
+
+/// Re-export of the listing parser at the crate root for symmetry
+/// with `tool::Assembler`. Both live in `tool` (combined to honor
+/// sw-checklist's crate-module budget) but readers may expect
+/// `sw_launcher::listing` to exist by name.
+pub mod listing {
+    pub use crate::tool::Listing;
+}
 
 pub use error::{Error, ErrorCode, Result};

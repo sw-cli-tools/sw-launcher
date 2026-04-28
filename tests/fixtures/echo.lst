@@ -1,0 +1,5 @@
+                    _start:
+0000: 29 41 00 00    la r0, 0x41
+0004: 2A 00 01 FF    la r1, 0xFF0100
+0008: 81 00          sb r0, 0(r1)
+000A: FF FF FF       .word 0xFFFFFF

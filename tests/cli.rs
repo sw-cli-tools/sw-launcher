@@ -58,12 +58,15 @@ fn run_with_scenario_returns_not_implemented() {
 }
 
 #[test]
-fn build_returns_not_implemented() {
+fn build_with_missing_config_fails_cleanly() {
+    // build is wired up as of step 007; without a config file it
+    // should surface an I/O / cli error code, not the "not yet
+    // implemented" sentinel.
     cmd()
-        .args(["build", "any"])
+        .args(["build", "any", "--config", "no-such-file.toml"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0091").or(contains("E0092")));
 }
 
 #[test]

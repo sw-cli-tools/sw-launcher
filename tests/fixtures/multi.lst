@@ -1,0 +1,6 @@
+                    _start:
+0000: 29 2A 00 00    la r0, 42
+0004: FF FF FF       .word 0xFFFFFF
+                    code_ptr:
+0007: 00 00 01       .word 0x010000
+                    eval_stack:

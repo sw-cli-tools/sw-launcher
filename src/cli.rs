@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::tool::{Assembler, BuildJob};
 use crate::validate;
 
 /// Long version string with copyright, license, repo, build host /
@@ -129,6 +130,9 @@ pub enum Commands {
     Build {
         /// Name of the scenario in `sw-launch.toml`.
         scenario: String,
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
     },
     /// Validate config + lockfile for a scenario; no tools spawned.
     Check {
@@ -184,7 +188,7 @@ pub enum VendorAction {
 pub fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run { .. } => Err(Error::not_implemented("run")),
-        Commands::Build { .. } => Err(Error::not_implemented("build")),
+        Commands::Build { scenario, config } => build_scenario(&config, &scenario),
         Commands::Check { scenario, config } => check_scenario(&config, &scenario),
         Commands::Graph { .. } => Err(Error::not_implemented("graph")),
         Commands::Cache { action } => match action {
@@ -198,6 +202,47 @@ pub fn dispatch(cli: Cli) -> Result<()> {
         },
         Commands::Doctor => Err(Error::not_implemented("doctor")),
     }
+}
+
+/// Implementation of `sw-launch build <scenario>`. Loads config,
+/// finds every assembler-kind layer with an `input` set, builds
+/// it via `Assembler` (with in-process memoization), prints the
+/// resulting artifact path to stdout. No emulator is spawned.
+fn build_scenario(config_path: &camino::Utf8Path, scenario: &str) -> Result<()> {
+    let cfg = Config::from_path(config_path)?;
+    let scen = cfg
+        .scenarios
+        .get(scenario)
+        .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?;
+    let mut asm = Assembler::from_path()?;
+    let out_root = config_path
+        .parent()
+        .map(|p| p.join(".sw-launch").join("build").join(scenario))
+        .unwrap_or_else(|| Utf8PathBuf::from(".sw-launch/build").join(scenario));
+    for layer_name in &scen.layers {
+        let Some(layer) = cfg.layers.get(layer_name) else {
+            continue;
+        };
+        if layer.kind != "assembler" {
+            continue;
+        }
+        let Some(input) = layer.input.as_deref() else {
+            continue;
+        };
+        let layer_dir = out_root.join(layer_name);
+        let bin = layer_dir.join(format!("{layer_name}.bin"));
+        let lst = layer_dir.join(format!("{layer_name}.lst"));
+        let job = BuildJob {
+            layer_name: layer_name.clone(),
+            input: Utf8PathBuf::from(input),
+            output_bin: bin.clone(),
+            output_lst: lst,
+            extra_args: Vec::new(),
+        };
+        asm.build(&job)?;
+        println!("built {layer_name} -> {bin}");
+    }
+    Ok(())
 }
 
 /// Implementation of `sw-launch check <scenario>`. Loads the

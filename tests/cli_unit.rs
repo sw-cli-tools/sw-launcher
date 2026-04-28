@@ -27,9 +27,11 @@ fn clap_definition_validates() {
 #[test]
 fn dispatch_returns_not_implemented_for_unimplemented_actions() {
     // `Check` is wired up as of step 006; the rest still stub.
+    // `Build` and `Check` are wired up as of step 006/007 and no
+    // longer use NotImplemented; only the genuinely-stubbed actions
+    // remain in this assertion.
     let scen = || s("x");
     assert_unimplemented(Commands::Run { scenario: scen() }, "run");
-    assert_unimplemented(Commands::Build { scenario: scen() }, "build");
     assert_unimplemented(Commands::Graph { scenario: scen() }, "graph");
     let list = Commands::Cache {
         action: CacheAction::List,
