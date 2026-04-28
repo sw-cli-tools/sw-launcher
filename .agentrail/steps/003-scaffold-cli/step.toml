@@ -1,6 +1,6 @@
 number = 3
 slug = "scaffold-cli"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 3: scaffold-cli
 
@@ -8,5 +8,6 @@ Stand up the binary skeleton for `sw-launch`. TDD: wr..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T08:36:20"
+completed_at = "2026-04-28T11:55:49"
 task_type = "rust"
-commits = []
+commits = ["2dbbfe90f0b9111561f29224af0c69093e16abd3"]
