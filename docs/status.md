@@ -14,14 +14,46 @@ Last updated: 2026-04-28
 
 ## Phase progress
 
-| Phase | Title                                  | State    |
-|-------|----------------------------------------|----------|
-| 0     | Survey existing repo layouts           | not started |
-| 1     | Skeleton + Scenario A                  | not started |
-| 2     | Scenario B (runtime + binary)          | not started |
-| 3     | Scenario C (nested interpreter)        | not started |
-| 4     | Caching, vendor sync, doctor, graph    | not started |
-| 5     | Multi-target stubs (deferred)          | not started |
+| Phase | Title                                  | State        |
+|-------|----------------------------------------|--------------|
+| 0     | Survey existing repo layouts           | done 2026-04-28 |
+| 0.5   | Schema revised based on survey         | done 2026-04-28 |
+| 1     | Skeleton + Scenario A                  | not started  |
+| 2     | Scenario B (runtime + binary)          | not started  |
+| 3     | Scenario C (nested interpreter)        | not started  |
+| 4     | Caching, vendor sync, doctor, graph    | not started  |
+| 5     | Multi-target stubs (deferred)          | not started  |
+
+## Schema v1.1 (2026-04-28)
+
+`docs/design.md` revised after the 13-repo survey. Every gap in
+`docs/survey/schema-gaps.md` is addressed:
+
+- **Addressing model**: 8 x 128 KiB partition grid with 4 x 32 KiB
+  regions (`code`/`heap`/`spare`/`stack`) is the default; absolute
+  addresses are an opt-out via `absolute_addresses = true`.
+- **New layer kinds**: `composite`, `uart-preamble`,
+  `uart-prebuffer`, `snapshot`, `regenerated`.
+- **Run modes**: `batch | terminal | resident | echo-line`.
+- **Programs slot table**: registry exposed by resident shells.
+- **Shared regions**: declared per layer, validated globally.
+- **Conditional loads**: file-presence / env predicates that
+  toggle layers.
+- **New scenario shapes**: D (composite image), E (resident
+  shell + program slots).
+- **Tool model**: `host-binary | emulator-hosted | script |
+  composite`; `path | vendor | sibling | from_path` source kinds;
+  named `post_process` transforms.
+- **Patch value forms**: `self.*`, cross-layer segment refs,
+  `sidecar:` references, cross-vendor symbol refs.
+- **New validation codes**: E0017..E0027 covering partition
+  collisions, mixed-mode collisions, sidecar staleness, shared-
+  region overlap, regenerated drift, non-contiguous claims,
+  resident-mode mismatch, cycle-budget outliers, composite-linker
+  missing, per-file-on-non-uart, guard-too-small.
+- **Out of scope (v1.1)**: filesystem stubs, GC scheduling,
+  diff-snapshots, multi-target sweeps, CI metadata, signal
+  handling.
 
 Phase 0 grounds the schema in observed reality across:
 `sw-embed/sw-cor24-{apl,basic,forth,macrolisp,ocaml,pascal,plsw,

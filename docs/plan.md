@@ -5,6 +5,19 @@ ends with a green pre-commit gate (tests, clippy, fmt,
 sw-checklist) and a working subset of `sw-launch`. Agentrail steps
 in the saga track the day-by-day work.
 
+## Schema status
+
+Schema v1.1 landed at the close of step 002-revise-schema
+(2026-04-28). Every gap in `docs/survey/schema-gaps.md` was
+addressed: 16 schema additions / generalizations and 11 new
+validation codes (E0017..E0027). The partition grid is now the
+default addressing model, with `absolute_addresses = true` as
+the opt-out for monolithic and mid-partition layouts. Two new
+scenario shapes are documented: D (composite image) and E
+(resident shell).
+
+Phase 1 implementation work begins from this schema baseline.
+
 ## Phase 0 -- survey existing layouts (informs all later phases)
 
 Before writing schema-tied code, capture the *real* memory layouts

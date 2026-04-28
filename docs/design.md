@@ -1,8 +1,22 @@
 # sw-launcher Design
 
 This document fixes the concrete shape of `sw-launch.toml`,
-`sw-launch.lock`, the cache key formula, the load plan, and the three
-primitive scenario shapes the tool must support on day one.
+`sw-launch.lock`, the cache key formula, the load plan, and the
+five primitive scenario shapes the tool must support on day one.
+
+This is **schema v1.1**, revised after the survey of 13 repos in
+`docs/survey/`. The earlier v1.0 treated layers as mostly opaque
+artifacts at absolute addresses. v1.1 introduces a partition grid
+(8 x 128 KiB; 4 x 32 KiB regions per partition) as the *default*
+addressing model, adds a composite layer kind, a resident-process
+run mode, two new patch value forms (sidecar files and
+cross-layer symbols), a more expressive UART layer model, and new
+validation rules for partition collisions, guard regions, sidecar
+staleness, and shared-region overlap.
+
+Every schema change is justified by a specific entry in
+`docs/survey/schema-gaps.md`; gap IDs are cited inline so the
+trace from observation to design is auditable.
 
 ## Naming and locations
 
@@ -13,6 +27,121 @@ primitive scenario shapes the tool must support on day one.
 - Per-project local state: `.sw-launch/`
 - User cache: `~/.cache/sw-launch/`
 - User vendor store: `~/.local/share/sw-launch/`
+
+## Addressing model: partitions and regions
+
+(Adopted from `docs/survey/partition-model-proposal.md`, gap H1.)
+
+The 1 MiB SRAM (`0x000000..0x0FFFFF`) is divided by default into
+**eight partitions** of 128 KiB. Each partition is divided into
+**four regions** of 32 KiB:
+
+| region | role          | offset within partition  | size   |
+|--------|---------------|--------------------------|--------|
+| `code` | code/statics  | partition + 0x00000      | 32 KiB |
+| `heap` | heap          | partition + 0x08000      | 32 KiB |
+| `spare`| spare/I-O/data| partition + 0x10000      | 32 KiB |
+| `stack`| stack         | partition + 0x18000      | 32 KiB |
+
+Absolute base addresses for each partition:
+
+| P | base       | partition end |
+|---|------------|---------------|
+| 0 | `0x000000` | `0x01FFFF`    |
+| 1 | `0x020000` | `0x03FFFF`    |
+| 2 | `0x040000` | `0x05FFFF`    |
+| 3 | `0x060000` | `0x07FFFF`    |
+| 4 | `0x080000` | `0x09FFFF`    |
+| 5 | `0x0A0000` | `0x0BFFFF`    |
+| 6 | `0x0C0000` | `0x0DFFFF`    |
+| 7 | `0x0E0000` | `0x0FFFFF`    |
+
+Two ways to claim addresses:
+
+### Partition-relative (default, recommended)
+
+A segment claims one or more `(partition, region)` cells. The
+launcher computes absolute addresses; collisions are checked at
+the cell grain.
+
+```toml
+[layers.pcode_vm.segments.code]
+kind   = "code"
+claims = [{ partition = 0, region = "code" }]
+
+[layers.ocaml_interp.segments.value_heap]
+kind   = "heap"
+grows  = "down"
+claims = [
+  { partition = 0, region = "spare" },
+  { partition = 0, region = "stack" },
+  { partition = 1, region = "code"  },
+  { partition = 1, region = "heap"  },
+]
+patches = [
+  { target = "ocaml_interp.heap_limit", value = "self.end" },
+]
+```
+
+### Absolute (opt-out for layers that don't fit)
+
+Some repos have monolithic images that exceed any partition
+(plsw's compiler is ~1 MiB) or use deliberately mid-partition
+addresses (macrolisp's 4 KiB-stride module slots). They opt
+out of the grid for that layer:
+
+```toml
+[layers.plsw_compiler]
+kind     = "binary"
+absolute_addresses = true
+load.method  = "memory"
+load.address = "0x000000"
+size         = "0x100000"
+```
+
+`absolute_addresses = true` means: ignore the partition grid for
+this layer; the loader places the artifact at `load.address` and
+the validator only checks SRAM/EBR/MMIO bounds and per-byte
+overlap with other layers' resolved ranges.
+
+### Mixing modes
+
+A scenario can mix partition-relative layers with
+absolute-address layers; the validator resolves each layer's
+ranges first, then runs the global overlap check at byte grain.
+The partition grid is *advisory* in this case: a
+partition-relative layer claiming partition 0 is reserving
+`[0x000000, 0x020000)`, and that same range cannot be claimed
+by an absolute-address layer.
+
+### Adjacent EBR + MMIO
+
+The COR24 hardware stack at `0xFEEC00..0xFEF7FF` and MMIO at
+`0xFF0000..0xFFFFFF` are *not* partitioned. They are declared
+in `[targets.cor24.regions]` and treated as off-limits for any
+partition or absolute claim.
+
+### Why default to partitions
+
+Three reasons, each grounded in the survey:
+
+- **Most existing layouts already align**. ocaml/tuplet,
+  snobol4, apl-batch, macrolisp's snapshot, sws, yocto-ed all
+  use addresses that fall on partition boundaries
+  (`0x040000`, `0x080000`, `0x0F0000`). Re-stating those in
+  partition coordinates is a labeling change.
+- **Collisions become qualitative**. "Layer X claims partition
+  2 region heap" vs "Layer Y claims partition 2 region heap"
+  is easier to debug than "0x048000..0x04FFFF overlaps
+  0x048000..0x04FFFF."
+- **`sw-launch graph` gets a meaningful visual**. The 8x4 grid
+  is the same shape every scenario. Cells colored by claiming
+  layer make collisions obvious.
+
+The cost is that 32 KiB regions are too small for some heaps
+(macrolisp's ~288 KiB BSS, OCaml's ~250 KiB heap, plsw's whole
+image). The multi-region claim form covers macrolisp and OCaml;
+plsw uses absolute_addresses.
 
 ## Memory layout: the three scenario shapes
 
@@ -263,6 +392,160 @@ This is the shape we observe in
 `OCAML_STDIN` is appended to the UART input after the source's EOT
 terminator. `sw-launch` makes that explicit and ordered.
 
+### Scenario D -- "composite image from N modules" (gap A1)
+
+Several repos compose one runtime image from N independently-
+assembled modules. snobol4 builds `snobol4.bin` from four
+`sno_*.s` modules linked by `link24`. macrolisp's multi-module
+demo loads five `.s` blobs at fixed slot addresses.
+
+```
++----------------------------------------+ 0x000000  <-- entry
+| sno_main + sno_util + sno_lex + sno_exec|
+| (linked composite)                     |
++----------------------------------------+ ~0x010000
+| ... free SRAM ...                      |
++----------------------------------------+ 0x080000
+| user source                            |
++----------------------------------------+ 0x090000
+| optional input data                    |
++----------------------------------------+ 0xFEEC00  EBR
++----------------------------------------+ 0xFF0000  MMIO
+```
+
+```toml
+[scenarios.snobol-hello]
+target = "cor24"
+layers = ["snobol4_image", "user_source"]
+entry  = "0x000000"
+
+[scenarios.snobol-hello.run]
+mode       = "batch"
+max_cycles = 10_000_000
+timeout_ms = 30_000
+halt_on    = "monitor-exit"
+
+[scenarios.snobol-hello.expect]
+uart_contains = ["HELLO"]
+
+[layers.snobol4_image]
+kind   = "composite"
+linker = "link24"
+modules = [
+  { name = "sno_main", input = "build/sno_main.s" },
+  { name = "sno_util", input = "build/sno_util.s" },
+  { name = "sno_lex",  input = "build/sno_lex.s"  },
+  { name = "sno_exec", input = "build/sno_exec.s" },
+]
+artifact = "build/snobol4.bin"
+absolute_addresses = true
+load.method  = "memory"
+load.address = "0x000000"
+
+[layers.user_source]
+kind   = "data"
+input  = "examples/hello.sno"
+load.method  = "memory"
+load.address = "0x080000"
+size         = "auto"
+```
+
+The optional input-data slot is a *conditional* layer (gap E2):
+
+```toml
+[[scenarios.snobol-hello.conditional_loads]]
+when      = { file_present = "examples/hello.dat" }
+add_layer = "user_data"
+
+[layers.user_data]
+kind   = "data"
+input  = "examples/hello.dat"
+load.method  = "memory"
+load.address = "0x090000"
+```
+
+If the data file is present, the layer is included; runtime
+selects "data mode" at the binary's entry probe (gap A2). If not,
+the layer is skipped and runtime falls into "TTY mode."
+
+### Scenario E -- "resident shell + program slots" (gap F1, F2)
+
+A monitor or sws-style shell stays loaded; user-typed program
+names invoke pre-loaded program binaries via a trampoline.
+sw-launch kicks off the emulator, then hands control to a
+TUI-driving harness (or to a test driver feeding canned UART).
+
+```
++----------------------------------------+ 0x000000  <-- entry
+| monitor + service vector                |
++----------------------------------------+ 0x002000
+| program slot 0                          |
++----------------------------------------+ 0x020000
+| sws shell                               |
++----------------------------------------+ 0x040000
+| program slot 1                          |
++----------------------------------------+
+| ... free SRAM ...                      |
++----------------------------------------+ 0x0F0000
+| shared regions (run_cmd, run_out, entry)|
++----------------------------------------+ 0xFEEC00  EBR
++----------------------------------------+ 0xFF0000  MMIO
+
+UART  : interactive (mode = "resident")
+```
+
+```toml
+[scenarios.monitor-with-forth]
+target = "cor24"
+layers = ["monitor", "sws", "forth_kernel"]
+entry  = "0x000000"
+
+[scenarios.monitor-with-forth.run]
+mode    = "resident"
+halt_on = "user-quit"
+
+# expectations are streaming for resident mode
+[scenarios.monitor-with-forth.expect]
+uart_contains = ["mon> "]
+
+[[scenarios.monitor-with-forth.programs]]
+slot  = "forth"
+layer = "forth_kernel"
+entry = "self.address"
+
+[layers.monitor]
+kind = "binary"
+absolute_addresses = true
+input = "build/monitor.bin"
+load.method  = "memory"
+load.address = "0x000000"
+
+[layers.monitor.shared_regions]
+run_request = { start = "0x0F0000", size = "0x000020", role = "input" }
+
+[layers.sws]
+kind = "binary"
+absolute_addresses = true
+input = "build/sws.bin"
+load.method  = "memory"
+load.address = "0x020000"
+
+[layers.sws.shared_regions]
+run_cmd_buf = { start = "0x0F0000", size = "0x000400", role = "input"  }
+run_out_buf = { start = "0x0F0400", size = "0x001000", role = "output" }
+run_entry_0 = { start = "0x0FFE00", size = "0x000003", role = "control" }
+cooperates_with = ["monitor"]   # silences E0020 for run_request overlap
+
+[layers.forth_kernel]
+kind = "assembler"
+input = "forth.s"
+tool  = "assembler"
+artifact = "forth.bin"
+absolute_addresses = true
+load.method  = "memory"
+load.address = "0x040000"
+```
+
 ## Memory segments per layer
 
 A layer is not just a code blob at an address. Each layer is a composite
@@ -276,6 +559,22 @@ of segments, any of which may be:
   whatever the VM already reserved), or
 - **patched into the runtime** so that it knows where to find its
   stack pointer / heap top / call-frame base.
+
+Reserved (non-embedded) segments can be located three ways, in
+decreasing order of preference:
+
+1. **Partition claim** (default): `claims = [{ partition = N,
+   region = "..."}, ...]`. The launcher computes the absolute
+   range. Multi-region claims are allowed and contiguous claims
+   are encouraged (E0022 warns on non-contiguous).
+2. **Absolute address**: `load.address = "0x..."` and `size =
+   "0x..."`. Required for the layer to also set
+   `absolute_addresses = true`.
+3. **Inferred from another layer's segment**: `claims = [{
+   layer = "<other>", segment = "<sname>", role = "after" |
+   "before" }]`. The launcher places this segment immediately
+   above (or below) the referenced one; useful for guard
+   regions and adjacency-encoded heaps.
 
 The COR24 hardware stack lives in 3 KB EBR at `0xFEEC00..0xFEF7FF`. That
 is large enough for `pvm.s` itself to use sparingly via `sp`, but
@@ -421,48 +720,202 @@ loader       = "cor24-memory-map"
 sram     = { start = "0x000000", end = "0x0FFFFF" }
 ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
 mmio     = { start = "0xFF0000", end = "0xFFFFFF" }
+
+# Partition grid declaration (gap H1; partition-model-proposal.md).
+# Defaults shown; override per-target if a future backend wants
+# different geometry.
+[targets.cor24.partitions]
+count        = 8
+size         = "0x020000"   # 128 KiB
+region_count = 4
+region_size  = "0x008000"   # 32 KiB
+region_names = ["code", "heap", "spare", "stack"]
+
+# Optional override for the COR24 hardware stack pointer init.
+# (Gap B4: apl uses --stack-kilobytes 8; plsw effectively uses 8 KiB.)
+[targets.cor24.run_defaults]
+stack_kilobytes = 3         # default; per-scenario `run.stack_kilobytes` overrides
 ```
 
-`validate` enforces:
+`validate` enforces (codes are stable; full list in "Validation
+rules"):
 
-- Every memory-loaded byte and every reserved segment falls inside
-  `regions.sram`.
-- Nothing user-loaded touches `regions.ebr_stack` (the COR24 hardware
-  stack is reserved) or `regions.mmio`.
-- Reserved stack/heap segments never overlap each other or any code/
-  data segment from any layer.
-- Total reserved memory <= `regions.sram.end - regions.sram.start + 1`.
+- Every loaded byte and every claimed region falls inside
+  `regions.sram` (E0011).
+- Nothing user-loaded touches `regions.ebr_stack` or
+  `regions.mmio` (E0011).
+- No two layers' resolved ranges overlap, whether via partition
+  claims or absolute addresses (E0003 / E0017).
+- Total claimed bytes <= sram size (E0012).
+- A partition's region cells don't overlap absolute-address
+  ranges of any other layer (E0017).
 
-This is what catches the "I forgot the OCaml heap collides with the
-DSL heap" class of bugs at `check` time, before the emulator even
+This is what catches the "I forgot the OCaml heap collides with
+the DSL heap" class of bug at `check` time, before the emulator
 starts.
 
 ## Layer kinds
 
-| kind          | input(s)              | tool             | artifact      | typical load |
-|---------------|-----------------------|------------------|---------------|--------------|
-| `assembler`   | `.s`                  | `assembler`      | `.bin`        | memory       |
-| `binary`      | `.bin`                | (none, copy)     | `.bin`        | memory       |
-| `pcode`       | `.spc`                | `pcode_assembler`| `.p24`        | memory       |
-| `pcode-image` | `.p24m` (pre-linked)  | (none, copy)     | `.p24m`       | memory       |
-| `text`        | UTF-8 text            | (none)           | bytes         | uart         |
-| `data`        | bytes                 | (none)           | bytes         | uart, memory |
+| kind            | input(s)              | tool             | artifact      | typical load | gap |
+|-----------------|-----------------------|------------------|---------------|--------------|-----|
+| `assembler`     | `.s`                  | `assembler`      | `.bin`        | memory       |     |
+| `binary`        | `.bin`                | (none, copy)     | `.bin`        | memory       |     |
+| `pcode`         | `.spc`                | `pcode_assembler`| `.p24`        | memory       |     |
+| `pcode-image`   | `.p24m` (pre-linked)  | (none, copy)     | `.p24m`       | memory       |     |
+| `text`          | UTF-8 text            | (none)           | bytes         | uart         |     |
+| `data`          | bytes                 | (none)           | bytes         | uart, memory |     |
+| `composite`     | list of layers        | linker (host)    | one `.bin`    | memory       | A1  |
+| `uart-preamble` | ordered list of files | (none, concat)   | bytes         | uart         | A3  |
+| `uart-prebuffer`| bytes                 | (none, copy)     | bytes         | memory       | F3  |
+| `snapshot`     | host post-processor    | extractor (host) | binary blob   | memory       | A5  |
+| `regenerated`   | rebuild script         | script           | any           | memory/uart  | A4  |
+
+### `composite` layer (gap A1)
+
+Combines N child layers into one image, linked host-side. Used by
+snobol4 (link24), macrolisp's multi-module demo (concatenated
+modules at fixed slots), and monitor's program registry.
+
+```toml
+[layers.snobol4_image]
+kind = "composite"
+linker = "link24"           # references [tools.link24]
+modules = [
+  { name = "sno_main", input = "build/sno_main.s", base = "auto" },
+  { name = "sno_util", input = "build/sno_util.s", base = "auto" },
+  { name = "sno_lex",  input = "build/sno_lex.s",  base = "auto" },
+  { name = "sno_exec", input = "build/sno_exec.s", base = "auto" },
+]
+artifact = "snobol4.bin"
+load.method  = "memory"
+load.address = "0x000000"
+```
+
+`base = "auto"` lets the linker compute contiguous bases; an
+explicit hex address pins a module at a fixed slot.
+
+### `uart-preamble` layer (gap A3)
+
+Ordered list of source files concatenated as the UART payload
+before user-supplied input. Used by all four forth kernels.
+
+```toml
+[layers.forth_preamble]
+kind = "uart-preamble"
+sources = [
+  "core/00-prelude.fth",
+  "core/10-arith.fth",
+  "core/20-strings.fth",
+]
+load.method = "uart"
+load.terminator = "none"
+```
+
+### `uart-prebuffer` layer (gap F3)
+
+A canned UART command stream pre-staged in *memory* at a fixed
+address; consumed by the runtime before falling through to live
+UART. Used by yocto-ed (`SYE_CMD_ADDR=0x0F0000`).
+
+```toml
+[layers.swye_prestage]
+kind = "uart-prebuffer"
+input = "tests/canned-keystrokes.bin"
+load.method = "memory"
+load.address = "0x0F0000"
+size = "0x000400"
+```
+
+### `snapshot` layer (gap A5)
+
+A two-phase artifact: phase 1 runs an emulator scenario that
+emits state via UART; phase 2 reloads the rehydrated snapshot.
+Used by macrolisp (`snapshot-save.s` -> `extract-snapshot.py`
+-> `prelude.snap`).
+
+```toml
+[layers.macrolisp_prelude]
+kind = "snapshot"
+generator = { scenario = "snapshot-save", capture = "uart" }
+post_process = { tool = "extract_snapshot_py", input_format = "tml-hex" }
+artifact = "build/prelude.snap"
+load.method = "memory"
+load.address = "0x080000"
+```
+
+The launcher runs the generator scenario the first time the
+snapshot is needed, captures UART, hands it to the post-processor,
+and caches the resulting blob. Subsequent runs hit the cache.
+
+### `regenerated` layer (gap A4)
+
+A layer whose source is committed to git but reproducible from a
+build script. Used by forth-from-forth's `kernel.s`.
+
+```toml
+[layers.fff_kernel]
+kind = "regenerated"
+input = "forth-from-forth/kernel.s"
+regen = "forth-from-forth/scripts/build-kernel.sh"
+artifact = "forth-from-forth/kernel.bin"
+load.method = "memory"
+load.address = "0x000000"
+```
+
+The cache key incorporates `sha256(<regen script output>)`. If
+the committed `kernel.s` and the regen output diverge,
+`sw-launch check` warns (new code E0021).
 
 ## Load methods
 
 ```toml
 load.method = "memory"
-load.address = "0x010000"   # required
+load.address = "0x010000"   # required if absolute_addresses
+# OR
+claims = [{ partition = 1, region = "code" }]   # partition mode
 ```
 
 ```toml
 load.method = "uart"
 load.max_bytes = 4096       # required, hard cap
-load.terminator = "EOT" | "none"
+load.terminator = "EOT" | "EOF" | "none"
+load.encoding = "raw" | "escape-interpreted"   # default raw; gap D2
+load.role = "command" | "source" | "data"      # gap D5
+load.in_band_terminator = ")OFF"               # optional; gap D2
 ```
 
-Future methods (declared but unimplemented in MVP): `card`, `disk`,
-`flash`, `serial-loader`.
+```toml
+# Composing multiple UART chunks (gap D1: ocaml/tuplet pattern).
+# Order is the order chunks are declared in the scenario.
+[scenarios.<n>.uart]
+chunks = [
+  { layer = "ocaml_source",  terminator = "EOT" },
+  { layer = "ocaml_stdin",   terminator = "none" },
+]
+```
+
+UART layers can also declare per-file framing (gap D3):
+
+```toml
+[layers.ocaml_source]
+kind = "uart-preamble"
+sources = ["demo.ml", "newlang.ml"]
+[layers.ocaml_source.per_file]
+prelude_template = "let __module = \"{module}\"\n"
+# placeholders: {name}, {stem}, {module}=stem with leading uppercase
+```
+
+Source pre-normalization (gap D4) is declared via named
+transforms (see "Tool model" below):
+
+```toml
+[layers.ocaml_source]
+# ...
+normalize = ["logical-line-fold", "strip-comments"]
+```
+
+Future load methods (declared but unimplemented in MVP):
+`card`, `disk`, `flash`, `serial-loader`.
 
 ## Patches
 
@@ -473,8 +926,48 @@ patches = [
 ]
 ```
 
-`target` is either `<layer>.<symbol>` (resolved by reading the layer's
-listing/map file) or a literal hex address. `value` is hex.
+### `target` forms
+
+- **Literal hex address**: `target = "0x000A12"`. Patches the
+  byte/word at that absolute address.
+- **`<layer>.<symbol>`**: resolved by reading the producing
+  layer's listing/map file. The producing layer must declare
+  `exports.symbols = ["..."]` and produce a parseable `.lst`.
+- **`<upstream-layer>.<symbol>` across vendors** (gap B2): if
+  `<upstream-layer>` is a vendored layer in the scenario,
+  symbols come from its vendored listing or sidecar. This
+  enables tuplet to pull pvm symbols from sw-cor24-ocaml's
+  build without re-deriving them.
+
+### `value` forms
+
+- **Literal hex**: `value = "0x010000"`.
+- **`self.address` / `self.end` / `self.size`**: only valid
+  inside a segment block; expands to the segment's resolved
+  address/end/size.
+- **`<layer>.<segment>.address` etc.** (gap B2): cross-layer
+  segment address reference, useful when one layer's heap
+  ceiling must equal another layer's start.
+- **`sidecar:<path>`** (gap B1): reads a hex-formatted address
+  from a build-time sidecar file. Used by ocaml and tuplet for
+  `code_ptr_addr.txt` and `heap_limit_addr.txt`. The sidecar
+  path is relative to the producing layer's build directory.
+  The lockfile records the sidecar's sha256; a stale sidecar
+  is E0019.
+
+  ```toml
+  patches = [
+    { target = "0xsidecar:vendor:sw-pcode/build/code_ptr_addr.txt",
+      value = "ocaml_interp.address" },
+    { target = "0xsidecar:vendor:sw-pcode/build/heap_limit_addr.txt",
+      value = "ocaml_interp.value_heap.end" },
+  ]
+  ```
+
+  The `0xsidecar:` prefix on `target` means: read this sidecar
+  for the address of the *symbol being patched*, then patch
+  that address with `value`. (Verbose but explicit; alternative
+  syntax discussed in step 2 trajectory.)
 
 ## Validation rules
 
@@ -512,6 +1005,39 @@ code; numbering is final once assigned):
     `load.address` and `size`.
 16. (E0016) Patches with `value = "self.address" | "self.end" |
     "self.size"` are only valid inside a segment block.
+17. (E0017) Partition-cell collision: two layers claim the same
+    `(partition, region)` cell. Diagnostic names both layers and
+    the offending cell.
+18. (E0018) Mixed-mode collision: a partition-relative claim and
+    an absolute-address layer's resolved range overlap. Diagnostic
+    shows both ranges in absolute hex.
+19. (E0019) Sidecar staleness: a `sidecar:` patch source's
+    sha256 differs from the lockfile entry. Suggests
+    `vendor sync` or `--update-lock`.
+20. (E0020) Shared-region overlap: two layers declare
+    `[layers.<n>.shared_regions.<r>]` covering the same address
+    range without naming each other as cooperating peers. (Gap H3.)
+21. (E0021) Regenerated drift (warning, not error): a
+    `kind = "regenerated"` layer's committed input differs from
+    the regen-script output. Suggests rerunning the regen.
+22. (E0022) Non-contiguous multi-region claim (warning, not
+    error): a heap or stack claims partition X r3 + partition Y r0
+    (skipping partitions in between is unusual; flag it). User can
+    silence with `claims_contiguity = "non-strict"`.
+23. (E0023) Mode/load mismatch: `run.mode = "resident"` requires
+    at least one layer with `kind = "binary"` declaring a
+    program slot, otherwise the resident shell has nothing to
+    invoke. (Gap E3, F1.)
+24. (E0024) Cycle/timeout outlier (warning, not error): scenario
+    `run.max_cycles` is more than 100x the median for this target.
+    Often legitimate; flagged to surface accidents.
+25. (E0025) Composite linker missing: a `kind = "composite"` layer
+    references a `linker` that is not in `[tools.*]`.
+26. (E0026) Per-file framing on non-uart layer: `per_file` block
+    on a layer whose `load.method != "uart"`.
+27. (E0027) Guard-region too small (warning, not error): adjacent
+    layers in absolute mode are separated by less than the
+    target's `min_guard` (default 0; configurable per scenario).
 
 ## Cache key
 
@@ -583,7 +1109,102 @@ Run the full match set; report each failure with the captured value
 side-by-side with the expectation. Successful runs may also emit a
 JSON report at `--report-json <path>` for machine consumption.
 
+## Run modes (gap E3)
+
+Every scenario declares a `run.mode`:
+
+| mode       | meaning                                                 |
+|------------|---------------------------------------------------------|
+| `batch`    | one-shot run; UART input is fully prepared in advance; emulator exits when halted; expectations checked against final UART. Default for Scenarios A-D. |
+| `terminal` | interactive; stdin streams into UART, stdout streams from UART; the launcher does not auto-halt. |
+| `resident` | the loaded image is a resident shell or monitor; the launcher kicks off and hands control to a TUI driver; expectations are partial/streaming. Default for Scenario E. |
+| `echo-line`| interactive line-buffered; useful for REPLs where each line gets its own expectation. |
+
+The launcher translates each mode into the appropriate
+`cor24-run` flags (`--terminal`, `--echo`, etc.).
+
+## Programs slot table (gap F1)
+
+A scenario can declare a *program registry* the resident shell
+exposes. Each entry maps a name to a layer's entry address.
+Used by monitor's `mon_run_request` registry; reusable by any
+resident-mode scenario.
+
+```toml
+[scenarios.monitor-with-forth]
+target = "cor24"
+layers = ["monitor", "sws", "forth_kernel"]
+entry  = "0x000000"
+
+[scenarios.monitor-with-forth.run]
+mode       = "resident"
+timeout_ms = 0           # no timeout in resident mode
+max_cycles = 0
+halt_on    = "user-quit"
+
+[[scenarios.monitor-with-forth.programs]]
+slot  = "forth"
+layer = "forth_kernel"
+entry = "self.address"   # entry = layer's load address
+
+[[scenarios.monitor-with-forth.programs]]
+slot  = "list"
+layer = "monitor"
+entry = "monitor.list_command"
+```
+
+The launcher writes the resolved `(slot, entry)` table into a
+shared-memory region the monitor reads at boot (declared in
+`monitor`'s `shared_regions`).
+
+## Shared regions (gap F2)
+
+Address ranges shared between layers (resident shell + program;
+editor + host driver). Declared per layer, validated globally.
+
+```toml
+[layers.sws.shared_regions]
+run_cmd_buf = { start = "0x0F0000", size = "0x000400", role = "input"  }
+run_out_buf = { start = "0x0F0400", size = "0x001000", role = "output" }
+run_entry_0 = { start = "0x0FFE00", size = "0x000003", role = "control" }
+
+[layers.swye.shared_regions]
+swye_cmd     = { start = "0x0F0000", size = "0x000400", role = "input" }
+swye_quit    = { start = "0x0F0400", size = "0x001000", role = "output" }
+```
+
+If two layers in the same scenario declare overlapping
+`shared_regions` without naming each other in `cooperates_with`,
+that's E0020.
+
+## Conditional loads (gap E2)
+
+Some scenarios load extra layers based on filename presence
+or environment variables (apl: presence of a `.cor24` file flips
+on a batch image; snobol4: presence of input data switches
+runtime mode).
+
+```toml
+[scenarios.apl-batch]
+target = "cor24"
+base_layers = ["apl_interp"]
+
+[[scenarios.apl-batch.conditional_loads]]
+when     = { file_present = "examples/{program}.cor24" }
+add_layer = "apl_batch_image"
+
+[[scenarios.apl-batch.conditional_loads]]
+when     = { env_set = "APL_TRACE" }
+add_layer = "trace_overlay"
+```
+
+Predicates: `file_present`, `file_absent`, `env_set`,
+`env_eq = { name = "...", value = "..." }`, `profile = "..."`.
+
 ## Profiles
+
+Profiles override scenario `run.*` settings without redefining the
+scenario.
 
 ```toml
 [profiles.demo]
@@ -596,11 +1217,132 @@ speed         = 0
 terminal      = false
 trace_loads   = true
 fail_fast     = true
+
+[profiles.compile-budget]   # gap E1: plsw uses this kind of profile
+max_cycles  = 200_000_000
+timeout_ms  = 120_000
+
+[profiles.run-budget]
+max_cycles  = 50_000_000
+timeout_ms  = 30_000
 ```
 
 `sw-launch run --profile test <scenario>` overrides any
 scenario-level run config with the profile's. Default profile is
-`demo`.
+`demo`. Per-scenario profile lists (gap E1) let one scenario
+declare multiple available profiles:
+
+```toml
+[scenarios.plsw-hello.profiles.compile]
+inherits = "compile-budget"
+add_layers = ["plsw_compiler"]
+
+[scenarios.plsw-hello.profiles.run]
+inherits = "run-budget"
+add_layers = ["plsw_compiled_program"]
+```
+
+## Tool model (new in v1.1; gaps C1, C2, G1, G2, G3)
+
+`[tools.<name>]` describes how to invoke a build tool. Each tool
+has a `kind`, a resolution `source`, and optional version pin.
+
+### Tool kinds
+
+| kind             | meaning                                       | gap |
+|------------------|-----------------------------------------------|-----|
+| `host-binary`    | a host executable, e.g. cor24-run, pa24r      |     |
+| `emulator-hosted`| invoke the emulator with a compiler image and source over UART; capture stdout between markers; output is the next stage's input | C1 |
+| `script`         | shell or python script                        |     |
+| `composite`      | sequence of tool invocations                  |     |
+
+```toml
+[tools.assembler]
+kind     = "host-binary"
+source   = { path = "/usr/local/bin/cor24-run" }
+version  = { command = ["cor24-run", "--version"], expect_regex = "^cor24-run 0\\." }
+
+[tools.pa24r]
+kind     = "host-binary"
+source   = { vendor = "sw-pcode", artifact = "pa24r" }
+
+[tools.link24]
+kind     = "host-binary"
+source   = { sibling = "../sw-cor24-plsw/components/linker", artifact = "target/release/link24" }
+
+[tools.plsw_compile]
+kind     = "emulator-hosted"
+runtime  = { layer = "plsw_compiler" }   # pre-existing layer
+input    = { method = "uart", framing = { begin = "FILE:", end = "" } }
+output   = { method = "uart", capture_between = ["BEGIN", "END"] }
+
+[tools.extract_snapshot_py]
+kind     = "script"
+source   = { path = "scripts/extract-snapshot.py" }
+```
+
+### Source resolution kinds (gaps G1, G2, G3)
+
+- `path`: absolute or repo-relative file path.
+- `vendor`: refers to a `[vendor.<name>]` entry; lockfile pins
+  the version.
+- `sibling`: refers to a sibling repo path; lockfile pins the
+  sibling's HEAD SHA at pin time. (Gap G3.)
+- `from_path`: just looks up the binary on `$PATH`; the
+  lockfile records the *observed* version string and binary
+  sha256 even though no pin was declared. (Gap G2; covers apl,
+  forth, macrolisp, monitor.)
+
+### Post-process transforms (gap C2)
+
+A small allow-list of named transforms tools can chain:
+
+| name                   | parameters              | meaning                                    |
+|------------------------|-------------------------|--------------------------------------------|
+| `extract-between`      | `begin`, `end`          | keep only lines between markers            |
+| `strip-prefix-lines`   | `prefix`                | drop matching prefix lines                 |
+| `ascii-filter`         | (none)                  | strip non-ASCII bytes                      |
+| `logical-line-fold`    | (none)                  | OCaml-style logical-line folding           |
+| `strip-comments`       | `style = "ml"\|"shell"` | drop `(* ... *)` or `# ...`                |
+| `strip-bom`            | (none)                  | strip leading BOM                          |
+| `splice`               | `begin`, `end`, `with`  | replace marked region with another payload |
+| `append`               | `bytes`                 | concat literal bytes (e.g. EOT)            |
+| `dedup-blank`          | (none)                  | collapse runs of blank lines               |
+
+Tools and layers can declare a chain:
+
+```toml
+[layers.ocaml_source]
+# ...
+normalize = ["logical-line-fold", "strip-comments"]
+
+[tools.plsw_compile]
+# ...
+post_process = [
+  { extract-between = { begin = "BEGIN", end = "END" } },
+  { append = { bytes = "" } },
+]
+```
+
+The transform set is closed; new transforms require a schema
+version bump.
+
+## Out of scope (v1.1)
+
+The following gaps were observed but explicitly deferred:
+
+- **I1. Filesystem stubs** (sws's `fs_read_file`). The launcher
+  doesn't model a virtual filesystem.
+- **I2. GC scheduling annotations.** The runtime owns this; the
+  launcher only owns the heap region.
+- **I3. Diff-based snapshot updates.** Phase 5+ if at all.
+- **Multi-target sweeps in one config.** A scenario binds to one
+  target; cross-target runs are driven by shell.
+- **Continuous-integration metadata.** The lockfile records what
+  was used; CI is a separate concern.
+- **Pre-emption / signal handling.** The launcher is fire-and-
+  forget plus a host-side timeout. Future Phase 5 work for
+  `run.mode = "resident"`.
 
 ## CLI surface (final shape)
 

@@ -119,6 +119,35 @@ patches.
 See `docs/design.md` "Memory segments per layer" for the schema and
 "Memory layout for Scenarios B and C" for example pictures.
 
+## Addressing model: partition grid
+
+Schema v1.1 (after the survey) makes the *partition grid* the
+default addressing mode: 8 partitions of 128 KiB, 4 regions per
+partition (32 KiB each, named `code`/`heap`/`spare`/`stack`).
+Partition-relative claims compose more cleanly than absolute
+addresses and produce a stable visual for `sw-launch graph`.
+
+Layers that don't fit (plsw's monolithic ~1 MiB compiler;
+mid-partition slot-based layouts like macrolisp's multi-module
+demo) opt out via `absolute_addresses = true` and continue to
+work. The validator runs the overlap check at byte grain, so
+mixed-mode scenarios are valid.
+
+See `docs/survey/partition-model-proposal.md` for the rationale
+and fit analysis across the 13 surveyed repos.
+
+## Run modes
+
+Schema v1.1 introduces explicit `run.mode` values: `batch`,
+`terminal`, `resident`, `echo-line`. Most existing scenarios are
+`batch` (one-shot run, fully prepared UART, halt on
+`monitor-exit`). Resident-shell scenarios (monitor, sws,
+yocto-ed) are `resident`: the launcher kicks the emulator off
+and hands control to a TUI driver or canned-input harness, and
+expectations are streaming rather than terminal.
+
+See `docs/design.md` "Run modes" for the complete table.
+
 ## Key invariants
 
 1. **Lockfile is the source of truth at run time.** The TOML expresses
@@ -142,6 +171,15 @@ See `docs/design.md` "Memory segments per layer" for the schema and
    composed with another layer that allocates above it -- the
    validator refuses the scenario rather than risking a silent
    collision.
+7. **Partition grid is the default addressing mode.** Schema v1.1
+   makes partition-relative claims the recommended way to express
+   memory layout; absolute addresses are supported but require
+   `absolute_addresses = true` and surface as a deviation in
+   `sw-launch graph`.
+8. **Run mode is declared, not inferred.** Every scenario states
+   one of `batch | terminal | resident | echo-line`. The launcher
+   refuses to apply mode-incompatible flags (e.g. timeout in
+   resident mode is informational, not load-bearing).
 
 ## Targets and backends
 
