@@ -4,9 +4,12 @@
 //! Every subcommand currently returns `Error::not_implemented`;
 //! later steps replace each stub with the real action.
 
+use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 
+use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::validate;
 
 /// Long version string with copyright, license, repo, build host /
 /// commit / time. Required by sw-checklist's "Version Field: ..."
@@ -131,6 +134,9 @@ pub enum Commands {
     Check {
         /// Name of the scenario in `sw-launch.toml`.
         scenario: String,
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
     },
     /// Print the layer DAG for a scenario.
     Graph {
@@ -175,86 +181,50 @@ pub enum VendorAction {
 }
 
 /// Dispatch a parsed `Cli` to the appropriate handler.
-///
-/// Currently every action returns `Error::not_implemented`. Later
-/// steps replace each `not_implemented` call with the real handler.
 pub fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Run { .. } => Err(Error::not_implemented("run")),
         Commands::Build { .. } => Err(Error::not_implemented("build")),
-        Commands::Check { .. } => Err(Error::not_implemented("check")),
+        Commands::Check { scenario, config } => check_scenario(&config, &scenario),
         Commands::Graph { .. } => Err(Error::not_implemented("graph")),
-        Commands::Cache { action } => dispatch_cache(action),
-        Commands::Vendor { action } => dispatch_vendor(action),
+        Commands::Cache { action } => match action {
+            CacheAction::List => Err(Error::not_implemented("cache list")),
+            CacheAction::Explain { .. } => Err(Error::not_implemented("cache explain")),
+            CacheAction::Clean => Err(Error::not_implemented("cache clean")),
+        },
+        Commands::Vendor { action } => match action {
+            VendorAction::Sync => Err(Error::not_implemented("vendor sync")),
+            VendorAction::Status => Err(Error::not_implemented("vendor status")),
+        },
         Commands::Doctor => Err(Error::not_implemented("doctor")),
     }
 }
 
-fn dispatch_cache(action: CacheAction) -> Result<()> {
-    match action {
-        CacheAction::List => Err(Error::not_implemented("cache list")),
-        CacheAction::Explain { .. } => Err(Error::not_implemented("cache explain")),
-        CacheAction::Clean => Err(Error::not_implemented("cache clean")),
-    }
-}
-
-fn dispatch_vendor(action: VendorAction) -> Result<()> {
-    match action {
-        VendorAction::Sync => Err(Error::not_implemented("vendor sync")),
-        VendorAction::Status => Err(Error::not_implemented("vendor status")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    fn assert_unimplemented(command: Commands, expected: &str) {
-        let cli = Cli { command };
-        let err = dispatch(cli).expect_err("should be unimplemented");
-        match err {
-            Error::NotImplemented { what, .. } => assert_eq!(what, expected),
-            other => panic!("expected NotImplemented({expected}), got {other:?}"),
+/// Implementation of `sw-launch check <scenario>`. Loads the
+/// config, runs `validate::validate`, prints every diagnostic to
+/// stderr, returns Ok if the scenario validated cleanly.
+fn check_scenario(config_path: &camino::Utf8Path, scenario: &str) -> Result<()> {
+    let cfg = Config::from_path(config_path)?;
+    match validate::validate(&cfg, scenario) {
+        Ok(warnings) => {
+            for d in &warnings {
+                eprintln!("{d}");
+            }
+            Ok(())
+        }
+        Err(diags) => {
+            for d in &diags {
+                eprintln!("{d}");
+            }
+            let count = diags
+                .iter()
+                .filter(|d| d.severity == validate::Severity::Error)
+                .count();
+            Err(Error::cli(format!("validation failed: {count} error(s)")))
         }
     }
-
-    fn s(name: &str) -> String {
-        name.to_string()
-    }
-
-    #[test]
-    fn clap_definition_validates() {
-        Cli::command().debug_assert();
-    }
-
-    #[test]
-    fn dispatch_returns_not_implemented_for_every_action() {
-        let scen = || s("x");
-        assert_unimplemented(Commands::Run { scenario: scen() }, "run");
-        assert_unimplemented(Commands::Build { scenario: scen() }, "build");
-        assert_unimplemented(Commands::Check { scenario: scen() }, "check");
-        assert_unimplemented(Commands::Graph { scenario: scen() }, "graph");
-        let list = Commands::Cache {
-            action: CacheAction::List,
-        };
-        assert_unimplemented(list, "cache list");
-        let explain = Commands::Cache {
-            action: CacheAction::Explain { scenario: scen() },
-        };
-        assert_unimplemented(explain, "cache explain");
-        let clean = Commands::Cache {
-            action: CacheAction::Clean,
-        };
-        assert_unimplemented(clean, "cache clean");
-        let sync = Commands::Vendor {
-            action: VendorAction::Sync,
-        };
-        assert_unimplemented(sync, "vendor sync");
-        let status = Commands::Vendor {
-            action: VendorAction::Status,
-        };
-        assert_unimplemented(status, "vendor status");
-        assert_unimplemented(Commands::Doctor, "doctor");
-    }
 }
+
+// Tests moved to `tests/cli_unit.rs` to keep module count under
+// the sw-checklist crate-module budget. CLI integration tests
+// remain in `tests/cli.rs`.

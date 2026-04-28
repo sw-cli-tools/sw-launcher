@@ -67,12 +67,14 @@ fn build_returns_not_implemented() {
 }
 
 #[test]
-fn check_returns_not_implemented() {
+fn check_with_missing_config_fails_cleanly() {
+    // check is wired up as of step 006; running in a directory
+    // without sw-launch.toml should surface an I/O / cli error.
     cmd()
-        .args(["check", "any"])
+        .args(["check", "any", "--config", "no-such-file.toml"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0091").or(contains("E0092")));
 }
 
 #[test]

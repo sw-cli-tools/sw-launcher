@@ -10,5 +10,6 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod validate;
 
 pub use error::{Error, ErrorCode, Result};
