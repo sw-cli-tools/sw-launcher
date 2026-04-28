@@ -53,7 +53,7 @@ This marks the step as `in-progress`. Required before doing work.
 ### 4. COMMIT -- commit your work with git
 
 ```bash
-git add <files>
+git add <code files> .agentrail/
 git commit -m "<clear message>"
 ```
 
@@ -62,8 +62,12 @@ captures the current `HEAD` commit hash into the step's `commits` field,
 which is how future `agentrail audit` runs link the step back to its
 commit. If you complete before committing, the linkage is wrong.
 
-Include `.agentrail/` files you touched in the commit -- they are part of
-the record.
+**Always stage `.agentrail/` alongside your code changes.** Every step
+you touch creates or updates files under `.agentrail/steps/<NNN>-<slug>/`
+(at minimum `step.toml` flips state). Those files are part of the
+durable record and must land in the same commit as the step's code.
+A commit that updates code without staging the matching `.agentrail/`
+diff is a bug -- amend or follow up before completing.
 
 ### 5. COMPLETE -- close the step
 
@@ -82,12 +86,37 @@ Flags:
 - Use `--next-slug` and `--next-prompt` to define the next step if you
   know what it should be; otherwise the human will plan it.
 
-### 6. STOP -- do not continue
+### 6. PUSH -- publish the step
 
-**Do not make any further changes after `agentrail complete`.** Any
-changes after complete are untracked by the saga and invisible to the
-next session. If you see more work to do, it belongs in the next step,
-not this one.
+```bash
+git status                  # confirm clean tree, including .agentrail/
+git push
+```
+
+**Every completed step must be pushed before the session ends.** This
+is non-negotiable:
+
+- The saga record (`.agentrail/`) only protects future sessions if it
+  reaches the remote. Local-only commits are invisible to other
+  machines, to CI, and to anyone reviewing the work.
+- `agentrail complete` writes a final transition into
+  `.agentrail/steps/<NNN>-<slug>/step.toml`. Push *after* `complete`,
+  not before, so that final write is included in the pushed commit.
+  (If you pushed before `complete`, do a follow-up `git commit -am
+  "agentrail: finalize step <slug>"` and push again.)
+- If `git push` fails (no upstream, network error, conflict), resolve
+  it now -- do not defer. A step that is committed but never pushed
+  looks "done" locally and "not started" everywhere else.
+
+After push: confirm `git status` is clean and `git log @{u}..` is
+empty.
+
+### 7. STOP -- do not continue
+
+**Do not make any further changes after `git push`.** Any changes
+after the step is pushed are untracked by the saga and invisible to
+the next session. If you see more work to do, it belongs in the next
+step, not this one.
 
 ---
 
@@ -96,13 +125,21 @@ not this one.
 The `.agentrail/` directory is the durable record of saga/step history.
 Treat it like source code.
 
-### Always track it in git
+### Always track, commit, and push it
 
 - `.agentrail/` **must** be tracked in git. Never add it to `.gitignore`.
   If you inherit a repo that has `.agentrail/` ignored, that is a bug --
   unignore it and commit the existing contents first.
 - Commit step artifacts as each step completes, in the same commit as
   your code changes.
+- Push after every step's final commit (the one written by `agentrail
+  complete`). A committed-but-unpushed `.agentrail/` is invisible to
+  the next session on another machine, to CI, and to `agentrail
+  audit` runs that look at remote history.
+- Before starting a step (after `agentrail next`, before `agentrail
+  begin`), verify `git status` is clean and `git log @{u}..` is
+  empty. If they aren't, the previous session forgot to push --
+  push now before starting new work.
 
 ### Never edit or delete files under `.agentrail/` by hand
 
@@ -116,9 +153,31 @@ Treat it like source code.
 
 ### Commit order matters
 
-Work -> `git add` -> `git commit` -> `agentrail complete`. In that order.
-Completing before committing means `commits` is empty and the audit
-command can't link step to commit.
+Work -> `git add` -> `git commit` -> `agentrail complete` -> `git
+commit -am "agentrail: finalize step <slug>"` (if `complete` mutated
+files) -> `git push`. In that order. Completing before committing
+means `commits` is empty and the audit command can't link step to
+commit. Pushing before completing means the final state of
+`.agentrail/steps/<NNN>/step.toml` lives only on your machine.
+
+### Archiving a saga also commits and pushes
+
+`agentrail archive --reason "..."` moves the current saga from
+`.agentrail/` into `.agentrail-archive/<saga>/`. That is a content
+move on disk and shows up as a large rename diff in git. The same
+commit-and-push discipline applies:
+
+```bash
+agentrail archive --reason "Phase 1 complete; opening Phase 2 saga"
+git add .agentrail/ .agentrail-archive/
+git commit -m "agentrail: archive saga <name>"
+git push
+```
+
+Never archive without immediately committing and pushing the result.
+A locally archived saga that hasn't been pushed is the worst of both
+worlds: the active `.agentrail/` no longer remembers it, and the
+remote never saw the move.
 
 ---
 
