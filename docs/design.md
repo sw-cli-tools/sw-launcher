@@ -4,18 +4,23 @@ This document fixes the concrete shape of `sw-launch.toml`,
 `sw-launch.lock`, the cache key formula, the load plan, and the
 five primitive scenario shapes the tool must support on day one.
 
-This is **schema v1.1**, revised after the survey of 13 repos in
-`docs/survey/`. The earlier v1.0 treated layers as mostly opaque
-artifacts at absolute addresses. v1.1 introduces a partition grid
-(8 x 128 KiB; 4 x 32 KiB regions per partition) as the *default*
-addressing model, adds a composite layer kind, a resident-process
-run mode, two new patch value forms (sidecar files and
-cross-layer symbols), a more expressive UART layer model, and new
-validation rules for partition collisions, guard regions, sidecar
-staleness, and shared-region overlap.
+This is **schema v1.2**, revised after `docs/memory-stance.md`
+and `docs/heap-analysis.md`. v1.0 treated layers as opaque
+artifacts at absolute addresses. v1.1 introduced a *fixed* 8 x
+128 KiB partition grid. v1.2 replaces the fixed grid with
+**named memory profiles** so each use case (compiled-app,
+interpreter-only, repl-inline-compile, compiler-image,
+resident-shell) declares its own partition shape, with
+per-profile heap and stack budgets.
+
+The v1.2 stance: 1 MiB of COR24 SRAM is luxurious by historical
+standards (1980s machines did real work in 4-256 KiB), so any
+heap > 32 KiB is suspicious until justified, and the schema
+makes the justification explicit (`heap_justification` block).
 
 Every schema change is justified by a specific entry in
-`docs/survey/schema-gaps.md`; gap IDs are cited inline so the
+`docs/survey/schema-gaps.md` or by `docs/heap-analysis.md`; gap
+IDs and analysis-section references are cited inline so the
 trace from observation to design is auditable.
 
 ## Naming and locations
@@ -28,120 +33,219 @@ trace from observation to design is auditable.
 - User cache: `~/.cache/sw-launch/`
 - User vendor store: `~/.local/share/sw-launch/`
 
-## Addressing model: partitions and regions
+## Addressing model: memory profiles
 
-(Adopted from `docs/survey/partition-model-proposal.md`, gap H1.)
+(v1.2; replaces v1.1's fixed grid. See `docs/memory-stance.md`
+and `docs/heap-analysis.md`.)
 
-The 1 MiB SRAM (`0x000000..0x0FFFFF`) is divided by default into
-**eight partitions** of 128 KiB. Each partition is divided into
-**four regions** of 32 KiB:
+Each scenario picks a **named memory profile** that declares the
+partition shape suited to its workload. Profiles encode the
+working hypothesis from `docs/heap-analysis.md`:
 
-| region | role          | offset within partition  | size   |
-|--------|---------------|--------------------------|--------|
-| `code` | code/statics  | partition + 0x00000      | 32 KiB |
-| `heap` | heap          | partition + 0x08000      | 32 KiB |
-| `spare`| spare/I-O/data| partition + 0x10000      | 32 KiB |
-| `stack`| stack         | partition + 0x18000      | 32 KiB |
+- A **compiled-app** running an interpreter has different needs
+  than a **REPL with in-line compilation**.
+- A **resident-shell** scenario carves SRAM into many small
+  program slots.
+- A **compiler-image** scenario gives most of SRAM to a single
+  large image with a small heap on the side.
+- An **interpreter-only** scenario is the middle ground.
 
-Absolute base addresses for each partition:
+A profile is *not* a fixed grid. It is an ordered list of
+partitions, each with its own size and its own list of named
+regions; partitions can have any number of regions of any size,
+constrained only by the partition's size and the target's SRAM
+bounds.
 
-| P | base       | partition end |
-|---|------------|---------------|
-| 0 | `0x000000` | `0x01FFFF`    |
-| 1 | `0x020000` | `0x03FFFF`    |
-| 2 | `0x040000` | `0x05FFFF`    |
-| 3 | `0x060000` | `0x07FFFF`    |
-| 4 | `0x080000` | `0x09FFFF`    |
-| 5 | `0x0A0000` | `0x0BFFFF`    |
-| 6 | `0x0C0000` | `0x0DFFFF`    |
-| 7 | `0x0E0000` | `0x0FFFFF`    |
+### Required default profiles
 
-Two ways to claim addresses:
+The schema reserves five profile names that ship with the
+launcher and have well-known semantics. A consuming repo can
+override their `partitions` and `budget` blocks but cannot
+rename them.
 
-### Partition-relative (default, recommended)
+| profile name           | description                                                |
+|------------------------|-----------------------------------------------------------|
+| `compiled-app`         | Single image at 0; small heap; small stack.               |
+| `interpreter-only`     | Runtime + interpreted source; modest heap.                |
+| `repl-inline-compile`  | Runtime + interpreter + compiler in image; large heap.    |
+| `compiler-image`       | Monolithic compiler-as-COR24-program (plsw); large code.  |
+| `resident-shell`       | Monitor + shell + N program slots; multiple small images. |
 
-A segment claims one or more `(partition, region)` cells. The
-launcher computes absolute addresses; collisions are checked at
-the cell grain.
+Each ships with default partition shapes and budgets sized per
+the analysis in `docs/heap-analysis.md`.
+
+### Profile syntax
 
 ```toml
-[layers.pcode_vm.segments.code]
-kind   = "code"
-claims = [{ partition = 0, region = "code" }]
+[memory_profiles.compiled-app]
+description = "Single image at 0; small heap; small stack."
 
-[layers.ocaml_interp.segments.value_heap]
-kind   = "heap"
-grows  = "down"
-claims = [
-  { partition = 0, region = "spare" },
-  { partition = 0, region = "stack" },
-  { partition = 1, region = "code"  },
-  { partition = 1, region = "heap"  },
+[[memory_profiles.compiled-app.partitions]]
+name = "code"
+base = "0x000000"
+size = "0x010000"            # 64 KiB
+regions = [
+  { name = "code",   kind = "code",  size = "auto" },
+  { name = "static", kind = "data",  size = "auto" },
 ]
-patches = [
-  { target = "ocaml_interp.heap_limit", value = "self.end" },
+
+[[memory_profiles.compiled-app.partitions]]
+name = "heap"
+base = "0x010000"
+size = "0x008000"            # 32 KiB
+regions = [
+  { name = "heap", kind = "heap", size = "0x008000" },
+]
+
+[[memory_profiles.compiled-app.partitions]]
+name = "stack"
+base = "0x018000"
+size = "0x002000"            # 8 KiB
+regions = [
+  { name = "stack", kind = "stack", size = "0x002000" },
+]
+
+[memory_profiles.compiled-app.budget]
+code_max  = "0x008000"       # 32 KiB
+heap_max  = "0x004000"       # 16 KiB
+stack_max = "0x002000"       # 8 KiB
+total_max = "0x010000"       # 64 KiB
+justification_required = true
+```
+
+### Default profile budgets (from heap-analysis.md)
+
+| profile               | code+data | heap     | stack   | total    |
+|-----------------------|-----------|----------|---------|----------|
+| `compiled-app`        | <= 32 KiB | <= 16 KiB| <= 8 KiB| <= 64 KiB|
+| `interpreter-only`    | <= 64 KiB | <= 64 KiB| <= 16 KiB| <= 160 KiB |
+| `repl-inline-compile` | <= 128 KiB| <= 256 KiB| <= 32 KiB| <= 448 KiB |
+| `compiler-image`      | <= 256 KiB| <= 64 KiB| <= 32 KiB| <= 384 KiB |
+| `resident-shell`      | <= 64 KiB per slot, up to 8 slots | per-program | shared 8 KiB | <= 512 KiB total |
+
+### How a scenario picks a profile
+
+```toml
+[scenarios.apl-batch]
+target = "cor24"
+memory_profile = "interpreter-only"
+layers = ["apl_interp", "apl_source"]
+entry  = "0x000000"
+```
+
+A scenario's `memory_profile` is a hard contract. Every layer in
+the scenario must claim within the named profile's partitions
+unless the layer explicitly opts out via `absolute_addresses =
+true`.
+
+### How a layer claims regions
+
+Layers cite the *profile's* partitions and regions by name, not
+by absolute address:
+
+```toml
+[layers.apl_interp.segments.code]
+kind   = "code"
+claims = [
+  { partition = "code", region = "code" },
+]
+
+[layers.apl_interp.segments.heap]
+kind   = "heap"
+claims = [
+  { partition = "heap", region = "heap" },
 ]
 ```
 
-### Absolute (opt-out for layers that don't fit)
+The launcher resolves names to absolute ranges using the
+scenario's selected profile. Renaming a partition in the
+profile renames it everywhere consistently.
 
-Some repos have monolithic images that exceed any partition
-(plsw's compiler is ~1 MiB) or use deliberately mid-partition
-addresses (macrolisp's 4 KiB-stride module slots). They opt
-out of the grid for that layer:
+### Multi-heap and multi-stack profiles
+
+A profile may declare multiple `kind = "heap"` regions of
+different sizes, and likewise multiple stacks. Useful when:
+
+- A scenario has a runtime heap *and* a separate program heap
+  (e.g., pvm's internal heap_seg plus the OCaml interpreter
+  heap above it).
+- A scenario has both a call stack (large) and an eval stack
+  (small) -- the p-code VM's standard configuration.
+
+Layers reference each by `(partition, region)` name; the
+validator confirms each named region exists and matches `kind`.
+
+### Heap justification (required for > 32 KiB heap)
+
+Any layer claiming a heap region above 32 KiB total must declare
+a `heap_justification` block:
+
+```toml
+[layers.ocaml_interp.heap_justification]
+category = "gc-slack"
+note     = "Mark/sweep GC; sized for working set + 2x slack."
+measured_floor_kib = 64
+tracking_issue     = "sw-cor24-ocaml#28"
+```
+
+Categories (from `docs/memory-stance.md`):
+
+| category             | accepted? | meaning                                              |
+|----------------------|-----------|------------------------------------------------------|
+| `algorithmic-floor`  | yes       | Working set genuinely requires this size.            |
+| `bytecode-image`     | yes       | Heap is mostly read-only data, not allocations.      |
+| `gc-slack`           | yes (with measured_floor_kib) | Sized for floor + slack between collections. |
+| `dead-leak`          | warn; rejected by `--strict` | Allocations that never get freed. |
+| `algorithmic-bloat`  | warn; rejected by `--strict` | Pointer width, boxing, dispatch tables, etc. |
+
+Without a `heap_justification` block, claims > 32 KiB are E0030.
+
+### Absolute-address opt-out
+
+A layer that doesn't fit any profile (plsw's monolithic compiler
+is ~1 MiB; macrolisp's mid-partition slot addresses) opts out:
 
 ```toml
 [layers.plsw_compiler]
-kind     = "binary"
+kind = "binary"
 absolute_addresses = true
 load.method  = "memory"
 load.address = "0x000000"
 size         = "0x100000"
+acknowledge_oversized = true
 ```
 
-`absolute_addresses = true` means: ignore the partition grid for
-this layer; the loader places the artifact at `load.address` and
-the validator only checks SRAM/EBR/MMIO bounds and per-byte
-overlap with other layers' resolved ranges.
-
-### Mixing modes
-
-A scenario can mix partition-relative layers with
-absolute-address layers; the validator resolves each layer's
-ranges first, then runs the global overlap check at byte grain.
-The partition grid is *advisory* in this case: a
-partition-relative layer claiming partition 0 is reserving
-`[0x000000, 0x020000)`, and that same range cannot be claimed
-by an absolute-address layer.
+`absolute_addresses = true` means: ignore the profile for this
+layer; the loader places the artifact at `load.address` and the
+validator checks only SRAM / EBR / MMIO bounds plus per-byte
+overlap with other layers. `acknowledge_oversized = true` is
+required when the layer's reservation pushes the scenario above
+the profile's `total_max` *or* above the 1 MiB rule of thumb.
 
 ### Adjacent EBR + MMIO
 
 The COR24 hardware stack at `0xFEEC00..0xFEF7FF` and MMIO at
-`0xFF0000..0xFFFFFF` are *not* partitioned. They are declared
-in `[targets.cor24.regions]` and treated as off-limits for any
-partition or absolute claim.
+`0xFF0000..0xFFFFFF` are not part of any profile. They are
+declared in `[targets.cor24.regions]` and treated as off-limits.
 
-### Why default to partitions
+### Why named profiles instead of a fixed grid
 
-Three reasons, each grounded in the survey:
+Three reasons, each grounded in the analysis:
 
-- **Most existing layouts already align**. ocaml/tuplet,
-  snobol4, apl-batch, macrolisp's snapshot, sws, yocto-ed all
-  use addresses that fall on partition boundaries
-  (`0x040000`, `0x080000`, `0x0F0000`). Re-stating those in
-  partition coordinates is a labeling change.
-- **Collisions become qualitative**. "Layer X claims partition
-  2 region heap" vs "Layer Y claims partition 2 region heap"
-  is easier to debug than "0x048000..0x04FFFF overlaps
-  0x048000..0x04FFFF."
-- **`sw-launch graph` gets a meaningful visual**. The 8x4 grid
-  is the same shape every scenario. Cells colored by claiming
-  layer make collisions obvious.
-
-The cost is that 32 KiB regions are too small for some heaps
-(macrolisp's ~288 KiB BSS, OCaml's ~250 KiB heap, plsw's whole
-image). The multi-region claim form covers macrolisp and OCaml;
-plsw uses absolute_addresses.
+- **A REPL needs more heap than a compiled app.** A fixed
+  32 KiB heap region forces unrelated workloads to share a
+  budget. v1.2 lets each profile size its heap to its
+  documented purpose.
+- **Bloat is debt, not a constant.** The historical record
+  (per `docs/memory-stance.md`) says these languages fit in
+  4-256 KiB total in the 1980s. v1.2 budgets are tight enough
+  to flag bloat; v1.1's 32 KiB heap regions were tight by
+  accident.
+- **Per-profile validation is more useful.** The diagnostic
+  "scenario `ocaml-newlang-demo` heap claims 252 KiB exceeds
+  `repl-inline-compile.budget.heap_max = 256 KiB`; consider
+  the OCaml GC work in `sw-cor24-ocaml#28`" is more actionable
+  than "heap claims overlap region cell."
 
 ## Memory layout: the three scenario shapes
 
@@ -721,15 +825,9 @@ sram     = { start = "0x000000", end = "0x0FFFFF" }
 ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
 mmio     = { start = "0xFF0000", end = "0xFFFFFF" }
 
-# Partition grid declaration (gap H1; partition-model-proposal.md).
-# Defaults shown; override per-target if a future backend wants
-# different geometry.
-[targets.cor24.partitions]
-count        = 8
-size         = "0x020000"   # 128 KiB
-region_count = 4
-region_size  = "0x008000"   # 32 KiB
-region_names = ["code", "heap", "spare", "stack"]
+# v1.2: no fixed partition grid here. Memory layout is declared
+# in [memory_profiles.<name>] blocks, and each scenario picks one.
+# See "Addressing model: memory profiles" above.
 
 # Optional override for the COR24 hardware stack pointer init.
 # (Gap B4: apl uses --stack-kilobytes 8; plsw effectively uses 8 KiB.)
@@ -1038,6 +1136,38 @@ code; numbering is final once assigned):
 27. (E0027) Guard-region too small (warning, not error): adjacent
     layers in absolute mode are separated by less than the
     target's `min_guard` (default 0; configurable per scenario).
+28. (E0028) Scenario heap claims exceed
+    `memory_profile.budget.heap_max`. Diagnostic shows the sum of
+    heap claims, the budget, and the offending layers. *Hard error.*
+29. (E0029) Scenario heap claims exceed 80% of
+    `memory_profile.budget.heap_max`. *Warning, not error.* Useful
+    early signal that bloat is creeping in.
+30. (E0030) Heap region > 32 KiB without a `heap_justification`
+    block. Diagnostic names the layer and the
+    accepted-category list (see `docs/memory-stance.md`).
+31. (E0031) Scenario references a `memory_profile` not declared
+    in `[memory_profiles.*]`. Diagnostic suggests the closest
+    Levenshtein match among declared profiles.
+32. (E0032) Layer claim names a `(partition, region)` not
+    present in the profile it references. Diagnostic lists the
+    profile's available `(partition, region)` pairs.
+33. (E0033) Memory profile declares overlapping partitions.
+    Sanity check on the profile itself (separate from cross-layer
+    overlap, E0003 / E0017).
+34. (E0034) Total reserved exceeds the 1 MiB rule of thumb
+    (`docs/memory-stance.md`). *Warning, not error.* Silenced per
+    layer with `acknowledge_oversized = true`. Profile budgets
+    that *individually* respect this rule but combine over 1 MiB
+    in a multi-profile scenario also trigger this.
+
+`--strict` mode promotes warnings to errors, with two
+exceptions:
+- E0024 (cycle-budget outlier) and E0027 (guard too small) stay
+  warnings even under `--strict`.
+- `heap_justification.category = "dead-leak"` and
+  `"algorithmic-bloat"` are *always* errors under `--strict`,
+  regardless of `acknowledge_oversized`. The launcher refuses to
+  bless those categories as production-acceptable.
 
 ## Cache key
 

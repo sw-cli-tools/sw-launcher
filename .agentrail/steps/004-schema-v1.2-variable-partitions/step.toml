@@ -1,6 +1,6 @@
 number = 4
 slug = "schema-v1.2-variable-partitions"
-status = "pending"
+status = "in-progress"
 description = """
 # Step: schema-v1.2-variable-partitions
 

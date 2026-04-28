@@ -8,15 +8,48 @@ in the saga track the day-by-day work.
 ## Schema status
 
 Schema v1.1 landed at the close of step 002-revise-schema
-(2026-04-28). Every gap in `docs/survey/schema-gaps.md` was
-addressed: 16 schema additions / generalizations and 11 new
-validation codes (E0017..E0027). The partition grid is now the
-default addressing model, with `absolute_addresses = true` as
-the opt-out for monolithic and mid-partition layouts. Two new
-scenario shapes are documented: D (composite image) and E
-(resident shell).
+(2026-04-28). v1.2 superseded it at the close of step
+004-schema-v1.2-variable-partitions (2026-04-28).
 
-Phase 1 implementation work begins from this schema baseline.
+The fixed 8 x 128 KiB partition grid in v1.1 was too rigid: a
+REPL with in-line compilation needs more heap than a compiled-
+app does, and forcing them to share a budget either starved the
+REPL or normalized the bloat. v1.2 replaces the grid with named
+**memory profiles** (`compiled-app`, `interpreter-only`,
+`repl-inline-compile`, `compiler-image`, `resident-shell`) each
+with its own partition shape and budget.
+
+The v1.2 stance is set by `docs/memory-stance.md`: 1 MiB SRAM is
+luxurious by 1980s standards; any heap > 32 KiB is suspicious
+until justified, with a `heap_justification` block recording the
+category. `dead-leak` and `algorithmic-bloat` categories warn
+and block `--strict`.
+
+The shrinkage backlog per repo is in `docs/heap-analysis.md`.
+Phase 1 implementation begins from the v1.2 schema baseline; the
+typed `Config` in step 005 will type v1.2, not v1.1.
+
+## Phase 0.6 -- schema v1.2 (variable partitions, named profiles)
+
+**Status: done 2026-04-28.** Step 004-schema-v1.2-variable-
+partitions produced `docs/heap-analysis.md` (per-repo > 32 KiB
+heap analysis with categorization, historical benchmarks, and
+shrinkage backlogs) and revised `docs/design.md` to v1.2:
+
+- `[memory_profiles.<name>]` blocks with per-profile partition
+  shapes and `budget` blocks
+- Five default profile families with budgets sized per heap-
+  analysis.md
+- `heap_justification` block on layers claiming > 32 KiB
+- `absolute_addresses = true` opt-out preserved
+- Validation codes E0028..E0034 appended (heap budget,
+  justification, profile resolution, partition self-overlap, 1
+  MiB rule of thumb)
+- `--strict` promotes warnings to errors except E0024 and E0027,
+  and always rejects `category = "dead-leak"` /
+  `"algorithmic-bloat"`
+
+
 
 ## Phase 0 -- survey existing layouts (informs all later phases)
 
