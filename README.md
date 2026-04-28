@@ -75,6 +75,8 @@ the protocol in [`CLAUDE.md`](CLAUDE.md).
 | [`docs/process.md`](docs/process.md) | TDD red/green/refactor cycle and pre-commit gate |
 | [`docs/tools.md`](docs/tools.md) | Software Wrighter tool inventory (sw-checklist, markdown-checker, etc.) |
 | [`docs/ai_agent_instructions.md`](docs/ai_agent_instructions.md) | Generated agent guidelines |
+| [`docs/survey/`](docs/survey/) | Per-repo memory-layout survey (13 repos) plus index, schema gaps, tuplet failure hypothesis, monitor-shell feasibility, partition-model proposal |
+| [`web/memory-layouts/`](web/memory-layouts/) | Static HTML with mermaid diagrams of every surveyed repo's memory layout. Serve with `./scripts/serve.sh` (port 5264) |
 | [`CLAUDE.md`](CLAUDE.md) | Per-session agentrail protocol for AI coding agents |
 
 ## The three primitive scenario shapes

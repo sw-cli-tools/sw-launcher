@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sw-launcher: COR24 memory layouts</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #555;
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #d8d8d8;
+    --code: #2d2d2d;
+    --accent: #2a5db0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg); background: var(--bg);
+    line-height: 1.55;
+  }
+  header {
+    padding: 2rem 1.5rem 1rem; max-width: 1200px; margin: 0 auto;
+  }
+  header h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+  header p { margin: 0.25rem 0; color: var(--muted); }
+  header a { color: var(--accent); }
+  nav.toc {
+    max-width: 1200px; margin: 0 auto; padding: 0.5rem 1.5rem 1rem;
+    display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  nav.toc a {
+    text-decoration: none; color: var(--accent);
+    border: 1px solid var(--border); background: var(--card);
+    padding: 0.2rem 0.55rem; border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.85rem;
+  }
+  nav.toc a:hover { background: #eef3fb; }
+  main {
+    max-width: 1200px; margin: 0 auto; padding: 1.5rem;
+  }
+  section.repo {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
+  }
+  section.repo h2 {
+    margin: 0 0 0.25rem; font-size: 1.15rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--code);
+  }
+  section.repo .summary { color: var(--muted); margin: 0.25rem 0 0.75rem; }
+  section.repo .meta {
+    font-size: 0.85rem; color: var(--muted);
+    margin-bottom: 0.75rem;
+  }
+  section.repo .meta code {
+    background: #f0f0f0; padding: 0.05rem 0.35rem; border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .grid {
+    display: grid; grid-template-columns: 1fr; gap: 1rem;
+  }
+  @media (min-width: 900px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+  }
+  .mermaid {
+    background: #fdfdfd; padding: 0.5rem; border-radius: 6px;
+    border: 1px solid #ececec; overflow: auto;
+  }
+  details {
+    margin-top: 0.75rem; font-size: 0.9rem;
+  }
+  details summary { cursor: pointer; color: var(--accent); }
+  details ul { margin: 0.4rem 0 0.2rem; padding-left: 1.25rem; }
+  footer {
+    max-width: 1200px; margin: 2rem auto 3rem; padding: 1rem 1.5rem;
+    color: var(--muted); font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--accent); }
+  .legend {
+    font-size: 0.85rem; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem;
+  }
+  .legend strong { color: var(--code); }
+  .badge {
+    display: inline-block; font-size: 0.7rem; font-weight: 600;
+    padding: 0.05rem 0.45rem; border-radius: 4px; margin-left: 0.5rem;
+    color: #fff; vertical-align: middle;
+  }
+  .badge.pattern-a { background: #4a8a4a; }
+  .badge.pattern-b { background: #2a5db0; }
+  .badge.pattern-c { background: #a04ba0; }
+  .badge.pattern-d { background: #b07a2a; }
+  .badge.pattern-e { background: #b04a4a; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>COR24 memory layouts across the language corpus</h1>
+  <p>
+    A visual companion to
+    <a href="../../docs/survey/index.md">docs/survey/index.md</a>.
+    Thirteen repos, five distinct shapes, one common 16 MiB address
+    space (<code>0x000000</code> SRAM through <code>0xFFFFFF</code>
+    MMIO).
+  </p>
+  <p>
+    Generated as part of step <code>001-survey-repos</code> in the
+    <a href="../../README.md">sw-launcher</a> Phase 0+1 saga. To
+    serve locally:
+    <code>./scripts/serve.sh</code> (port 5264).
+  </p>
+</header>
+
+<nav class="toc">
+  <a href="#apl">apl</a>
+  <a href="#basic">basic</a>
+  <a href="#forth">forth</a>
+  <a href="#macrolisp">macrolisp</a>
+  <a href="#ocaml">ocaml</a>
+  <a href="#pascal">pascal</a>
+  <a href="#plsw">plsw</a>
+  <a href="#smalltalk">smalltalk</a>
+  <a href="#snobol4">snobol4</a>
+  <a href="#monitor">monitor</a>
+  <a href="#script">script</a>
+  <a href="#yocto-ed">yocto-ed</a>
+  <a href="#tuplet">tuplet</a>
+</nav>
+
+<main>
+
+<div class="legend">
+  <strong>Pattern legend.</strong>
+  <span class="badge pattern-a">A</span> single-image-at-zero, UART-fed source.
+  <span class="badge pattern-b">B</span> runtime + image + patch.
+  <span class="badge pattern-c">C</span> nested interpreter with heap-limit patch.
+  <span class="badge pattern-d">D</span> multi-module composite image.
+  <span class="badge pattern-e">E</span> resident shell + paste-and-go.
+  <br>Stack: COR24 EBR is always 3 KiB at <code>0xFEEC00..0xFEF7FF</code>; MMIO is at <code>0xFF0000+</code>. Diagrams omit them unless the repo touches their geometry.
+</div>
+
+<!-- ============================================================== -->
+<section class="repo" id="apl">
+  <h2>sw-cor24-apl <span class="badge pattern-a">A</span></h2>
+  <p class="summary">
+    APL interpreter assembled from <code>tc24r src/main.c</code>.
+    Single image at zero, UART-fed source, <code>)OFF</code> as
+    in-band terminator. Optional batch mode adds one binary at
+    <code>0x080000</code> with a single sentinel patch.
+  </p>
+  <p class="meta">
+    Loads: 0-1 &middot; Patches: 0-1 &middot; Heap: <code>int heap[4096]</code> in BSS &middot;
+    <a href="../../docs/survey/apl.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:apl
+    columns 1
+    code["apl.bin (interpreter)
+0x000000 - end_of_image"]
+    bss["BSS: prog_buf 7680B
+heap[4096] ints (grows up)"]
+    free["... free SRAM ..."]
+    optimg["optional .cor24 image
+0x080000 (batch mode)"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB
+0xFEEC00 - 0xFEF7FF"]
+    mmio["MMIO 0xFF0000+"]
+  end
+  classDef code fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap fill:#cfe7cf,stroke:#4a8a4a;
+  classDef hw   fill:#eaeaea,stroke:#777;
+  class code code
+  class bss heap
+  class optimg code
+  class ebr,mmio hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="basic">
+  <h2>sw-cor24-basic <span class="badge pattern-a">A</span></h2>
+  <p class="summary">
+    BASIC interpreter compiled from Pascal to p-code. The build
+    invocation loads <code>p24p.bin</code> at zero with the Pascal
+    source over UART; the run invocation hands <code>basic.p24</code>
+    to the host <code>pv24t</code> p-code interpreter (no
+    <code>--load-binary</code> at run time). Heaps are static
+    Pascal arrays inside the BASIC program.
+  </p>
+  <p class="meta">
+    Loads: 1 (build only) &middot; Patches: 0 &middot;
+    Heap: <code>vars[26] apool[1024]</code> &middot;
+    <a href="../../docs/survey/basic.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:basic
+    columns 1
+    p24p["p24p.bin (Pascal compiler)
+0x000000"]
+    runtime["Pascal runtime + BASIC interp"]
+    bss["DIM arrays: PS=16384, gs[64]
+fv/fl/fs/fr[16], vars[26], apool[1024]"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB
+0xFEEC00 - 0xFEF7FF"]
+  end
+  classDef code fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap fill:#cfe7cf,stroke:#4a8a4a;
+  classDef hw   fill:#eaeaea,stroke:#777;
+  class p24p,runtime code
+  class bss heap
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="forth">
+  <h2>sw-cor24-forth <span class="badge pattern-a">A</span></h2>
+  <p class="summary">
+    DTC Forth in COR24 assembly. Runs as
+    <code>cor24-run --run forth.s -u "&lt;preamble&gt;"</code>
+    -- never <code>--load-binary</code>. RSP grows down from
+    <code>0x0F0000</code>; HERE bumps up from <code>dict_end</code>;
+    DSP is the COR24 hardware stack.
+  </p>
+  <p class="meta">
+    Loads: 0 &middot; Patches: 0 &middot; Heap: dictionary at HERE &middot;
+    <a href="../../docs/survey/forth.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:forth
+    columns 1
+    code["forth.s (kernel + words)
+0x000000"]
+    dict["dictionary, grows up from dict_end
+HERE bump pointer"]
+    free["... free SRAM ..."]
+    rsp["return stack
+0x0F0000 (RSP), grows down"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack = DSP
+0xFEEC00 - 0xFEF7FF (grows down)"]
+  end
+  classDef code fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap fill:#cfe7cf,stroke:#4a8a4a;
+  classDef stack fill:#fde6c4,stroke:#b07a2a;
+  classDef hw   fill:#eaeaea,stroke:#777;
+  class code code
+  class dict heap
+  class rsp stack
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="macrolisp">
+  <h2>sw-cor24-macrolisp <span class="badge pattern-d">D</span></h2>
+  <p class="summary">
+    Lisp interpreter with snapshot model. <code>snapshot-save.s</code>
+    dumps interpreter state as ASCII hex over UART; host
+    <code>extract-snapshot.py</code> rehydrates to
+    <code>build/prelude.snap</code>; the REPL loads with
+    <code>--load-binary build/prelude.snap@0x080000</code>. Multi-
+    module demo loads five .s blobs at <code>0x1000..0x5000</code>.
+  </p>
+  <p class="meta">
+    Loads: 0-6 &middot; Patches: 0 &middot;
+    Heap: heap_car / heap_cdr / mark (~288 KiB BSS) &middot;
+    <a href="../../docs/survey/macrolisp.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:ml
+    columns 1
+    main["main.s / repl-snapshot.s
+0x000000"]
+    mod1["uart module @ 0x001000"]
+    mod2["spi module @ 0x002000"]
+    mod3["i2c module @ 0x003000"]
+    mod4["gpio module @ 0x004000"]
+    mod5["timer module @ 0x005000"]
+    bss["heap_car, heap_cdr, mark, symbols, strings
+~288 KiB BSS"]
+    snap["prelude.snap
+0x080000 (rehydrated state)"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap fill:#cfe7cf,stroke:#4a8a4a;
+  classDef snap fill:#f1d4f1,stroke:#a04ba0;
+  classDef hw   fill:#eaeaea,stroke:#777;
+  class main,mod1,mod2,mod3,mod4,mod5 code
+  class bss heap
+  class snap snap
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="ocaml">
+  <h2>sw-cor24-ocaml <span class="badge pattern-c">C</span></h2>
+  <p class="summary">
+    OCaml interpreter (Pascal-compiled to p-code), running on pvm.
+    Two binary loads, two build-time-resolved patches: one for
+    <code>code_ptr</code>, one for <code>heap_limit</code>. Heap
+    grows down; only the ceiling is patched. UART carries
+    <code>source + EOT (0x04) + OCAML_STDIN</code>.
+  </p>
+  <p class="meta">
+    Loads: 2 &middot; Patches: 2 &middot;
+    Heap: limit-only at <code>0x03F000</code> &middot;
+    <a href="../../docs/survey/ocaml.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:ocaml
+    columns 1
+    pvm["pvm.bin code
+0x000000"]
+    pvmstk["pvm embedded
+call_stack 0x001890
+eval_stack 0x002890
+heap_seg 0x002E90"]
+    heap["OCaml value heap (grows down)
+limit = 0x03F000 (patched)"]
+    guard["4 KiB guard"]
+    image["ocaml.p24m
+0x040000 (code_ptr patched here)"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code  fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap  fill:#cfe7cf,stroke:#4a8a4a;
+  classDef stack fill:#fde6c4,stroke:#b07a2a;
+  classDef guard fill:#fff4cc,stroke:#999;
+  classDef hw    fill:#eaeaea,stroke:#777;
+  class pvm,image code
+  class pvmstk stack
+  class heap heap
+  class guard guard
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="pascal">
+  <h2>sw-cor24-pascal <span class="badge pattern-b">B</span></h2>
+  <p class="summary">
+    Pascal-to-pcode compiler. Two run shapes share an output
+    address but differ on patch vehicle:
+    single-unit uses <code>--load-binary &lt;name&gt;.bin@0x010000</code>
+    plus a 3-byte <code>code_ptr.bin</code>; multi-unit pre-assembles
+    <code>pvm.bin@0</code>, loads <code>&lt;name&gt;.p24m@0x010000</code>,
+    and uses <code>--patch</code>.
+  </p>
+  <p class="meta">
+    Loads: 1-2 &middot; Patches: 1 &middot;
+    Heap: embedded in image &middot;
+    <a href="../../docs/survey/pascal.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:pascal
+    columns 1
+    pvm["pvm.bin (multi-unit only)
+0x000000"]
+    cp["code_ptr.bin (3 bytes, single-unit)
+@ 0x000000"]
+    image["compiled .bin / .p24m
+0x010000 (patched code_ptr)"]
+    rt["Pascal runtime"]
+    bss["compiler/runtime statics"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code  fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap  fill:#cfe7cf,stroke:#4a8a4a;
+  classDef hw    fill:#eaeaea,stroke:#777;
+  class pvm,cp,image,rt code
+  class bss heap
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="plsw">
+  <h2>sw-cor24-plsw <span class="badge pattern-a">A</span></h2>
+  <p class="summary">
+    PL/SW compiler-as-COR24-program. Compile pipeline runs the
+    emulator twice -- once with the compiler image and source over
+    UART, then again with the captured assembly. Three vendored
+    toolchains (<code>sw-cx24</code>, <code>sw-asx24</code>,
+    <code>sw-em24</code>) declared but TBD-stubbed.
+  </p>
+  <p class="meta">
+    Loads: 0 (no <code>--load-binary</code>) &middot; Patches: 0 &middot;
+    Heap: user-space arenas &middot;
+    <a href="../../docs/survey/plsw.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:plsw
+    columns 1
+    code["plsw.s compiler image (~356K lines)
+0x000000"]
+    rt["runtime / globals"]
+    arena["user-space arenas
+(per-program bump allocators)"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 8 KiB
+0xFEE000 - 0xFEFFFF"]
+  end
+  classDef code  fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap  fill:#cfe7cf,stroke:#4a8a4a;
+  classDef hw    fill:#eaeaea,stroke:#777;
+  class code,rt code
+  class arena heap
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="smalltalk">
+  <h2>sw-cor24-smalltalk <span class="badge pattern-a">A (delegated)</span></h2>
+  <p class="summary">
+    Host-side Smalltalk-to-BASIC compiler. Produces a single .bas
+    file and hands it to the sibling <code>sw-cor24-basic</code>
+    runner -- no <code>cor24-run</code> invocation, no memory
+    loads, no patches. Heap and stacks are DIM arrays inside the
+    running BASIC program.
+  </p>
+  <p class="meta">
+    Loads: 0 &middot; Patches: 0 &middot;
+    Heap: <code>H(511)</code> in DIM &middot;
+    <a href="../../docs/survey/smalltalk.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:st
+    columns 1
+    note[".st source (host)
+-> stc.awk
+-> BASIC source (concat with vm.bas)
+-> sw-cor24-basic runner"]
+    delegated["execution delegated to basic
+(see sw-cor24-basic memory map)"]
+  end
+  classDef pipeline fill:#fff4cc,stroke:#b07a2a;
+  classDef other    fill:#eaeaea,stroke:#777;
+  class note pipeline
+  class delegated other
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="snobol4">
+  <h2>sw-cor24-snobol4 <span class="badge pattern-d">D</span></h2>
+  <p class="summary">
+    SNOBOL4 interpreter as four PL/SW modules
+    (<code>sno_main</code>, <code>sno_util</code>,
+    <code>sno_lex</code>, <code>sno_exec</code>) linked host-side
+    by <code>link24</code> into one image. Source loads at
+    <code>0x080000</code>; optional input data at
+    <code>0x090000</code> is mode-selecting (presence flips
+    <code>INP_TTY=0|1</code>).
+  </p>
+  <p class="meta">
+    Loads: 1-3 &middot; Patches: 0 (FIXUPs resolved by link24) &middot;
+    <a href="../../docs/survey/snobol4.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:sno
+    columns 1
+    img["snobol4.bin (link24 composite)
+sno_main + sno_util + sno_lex + sno_exec
+0x000000"]
+    bss["embedded buffers
+SB 64 KiB, SRC 12 KiB, sym/label/stmt tables
+eval/pattern/call stacks"]
+    free["... free SRAM ..."]
+    src["source @ 0x080000"]
+    data["optional data @ 0x090000
+(presence -> INP_TTY=0)"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code  fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap  fill:#cfe7cf,stroke:#4a8a4a;
+  classDef data  fill:#f1d4f1,stroke:#a04ba0;
+  classDef hw    fill:#eaeaea,stroke:#777;
+  class img code
+  class bss heap
+  class src,data data
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="monitor">
+  <h2>sw-cor24-monitor <span class="badge pattern-e">E</span></h2>
+  <p class="summary">
+    Resident monitor + sws shell + program slots. Emulator
+    preloads every binary; transfer of control happens
+    in-emulator via <code>mon_invoke_program</code> trampoline
+    (saves SP, calls program, longjmp-style return via
+    <code>svc_exit_impl</code>). User cannot edit source -- only
+    invoke pre-assembled binaries by name.
+  </p>
+  <p class="meta">
+    Loads: many &middot; Patches: 0 &middot;
+    <a href="../../docs/survey/monitor.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:mon
+    columns 1
+    mon["monitor + service vector
+0x000000 (vector @ 0x000500)"]
+    p1["program @ 0x002000"]
+    p2["program @ 0x003000"]
+    p3["program @ 0x005000"]
+    sws["sws shell @ 0x020000"]
+    p4["program @ 0x040000"]
+    free["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB
+shared by all resident processes"]
+  end
+  classDef code  fill:#cfe3ff,stroke:#2a5db0;
+  classDef shell fill:#fde6c4,stroke:#b07a2a;
+  classDef hw    fill:#eaeaea,stroke:#777;
+  class mon,p1,p2,p3,p4 code
+  class sws shell
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="script">
+  <h2>sw-cor24-script (sws) <span class="badge pattern-e">E</span></h2>
+  <p class="summary">
+    Single-binary REPL shell. <code>run</code> command jumps
+    directly to a co-loaded program's entry via
+    <code>mem_read_word</code> at <code>RUN_ENTRY_0=0x0FFE00</code>.
+    Shared-memory protocol regions
+    (<code>RUN_CMD_BUF</code>, <code>RUN_OUT_BUF</code>) carry
+    command and output. No in-process assembler; only invokes
+    co-loaded binaries.
+  </p>
+  <p class="meta">
+    Loads: 0+1 &middot; Patches: 0+1 &middot;
+    <a href="../../docs/survey/script.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:sws
+    columns 1
+    sws["sws shell binary
+0x000000 - 0x00F3D2"]
+    free1["... free SRAM ..."]
+    cmd["RUN_CMD_BUF
+0x0F0000 (1 KiB)"]
+    out["RUN_OUT_BUF
+0x0F0400 (4 KiB)"]
+    entry["RUN_ENTRY_0
+0x0FFE00 (24-bit entry word)"]
+    prog["co-loaded program (e.g. swye)"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB
+(or 8 KiB on demand)"]
+  end
+  classDef code   fill:#cfe3ff,stroke:#2a5db0;
+  classDef shared fill:#f1d4f1,stroke:#a04ba0;
+  classDef hw     fill:#eaeaea,stroke:#777;
+  class sws,prog code
+  class cmd,out,entry shared
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="yocto-ed">
+  <h2>sw-cor24-yocto-ed <span class="badge pattern-e">E</span></h2>
+  <p class="summary">
+    Pure editor (no <code>run</code> command). Edited source
+    lives in BSS array <code>g_work_buffer[4096]</code>.
+    Three-address lifecycle: source loads at
+    <code>0x010000</code> (--load-binary), edits happen in BSS,
+    on quit the buffer is copied to <code>0x0F0400</code> for the
+    host to retrieve. <code>SYE_CMD_ADDR=0x0F0000</code> can pre-
+    stage canned keystrokes.
+  </p>
+  <p class="meta">
+    Loads: 1 &middot; Patches: 0 &middot;
+    <a href="../../docs/survey/yocto-ed.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:swye
+    columns 1
+    code["swye editor binary
+0x000000"]
+    src["source loaded by host
+0x010000"]
+    work["g_work_buffer[4096] (BSS)
+edits live here"]
+    free1["... free SRAM ..."]
+    cmd["SYE_CMD_ADDR
+0x0F0000 (canned keystrokes)"]
+    quit["post-quit buffer
+0x0F0400 (host retrieves edited source)"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code   fill:#cfe3ff,stroke:#2a5db0;
+  classDef heap   fill:#cfe7cf,stroke:#4a8a4a;
+  classDef shared fill:#f1d4f1,stroke:#a04ba0;
+  classDef hw     fill:#eaeaea,stroke:#777;
+  class code,src code
+  class work heap
+  class cmd,quit shared
+  class ebr hw
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="repo" id="tuplet">
+  <h2>tuplet (failing canonical case) <span class="badge pattern-c">C</span></h2>
+  <p class="summary">
+    Most complex orchestration in the corpus. Three loads
+    (<code>pvm.bin@0</code>, <code>ocaml.p24m@0x040000</code>,
+    <code>image.bin@0x080000</code>), two build-time-resolved
+    patches (<code>code_ptr</code>, <code>heap_limit</code>),
+    UART source plus EOT, runtime data via the loaded image
+    rather than via post-EOT UART. Currently fails -- see
+    <a href="../../docs/survey/tuplet-failure-hypothesis.md">failure
+    hypothesis</a>.
+  </p>
+  <p class="meta">
+    Loads: 3 &middot; Patches: 2 &middot;
+    Heap corridor: <code>end_of_pvm</code> to <code>0x03F000</code> &middot;
+    <a href="../../docs/survey/tuplet.md">survey</a>
+  </p>
+  <div class="mermaid">
+block-beta
+  columns 1
+  block:tup
+    columns 1
+    pvm["pvm.bin
+0x000000"]
+    pvmstk["pvm embedded eval/call stacks + heap_seg"]
+    heap["OCaml heap (grows down)
+limit = 0x03F000 (patched)"]
+    guard["4 KiB guard"]
+    image["ocaml.p24m
+0x040000 (code_ptr patched here)"]
+    free1["... free SRAM (256 KiB) ..."]
+    data["input image
+0x080000 (with appended ETX)"]
+    free2["... free SRAM ..."]
+    ebr["EBR hw stack 3 KiB"]
+  end
+  classDef code   fill:#cfe3ff,stroke:#2a5db0;
+  classDef stack  fill:#fde6c4,stroke:#b07a2a;
+  classDef heap   fill:#cfe7cf,stroke:#4a8a4a;
+  classDef guard  fill:#fff4cc,stroke:#999;
+  classDef shared fill:#f1d4f1,stroke:#a04ba0;
+  classDef hw     fill:#eaeaea,stroke:#777;
+  class pvm,image code
+  class pvmstk stack
+  class heap heap
+  class guard guard
+  class data shared
+  class ebr hw
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    Source: <a href="../../docs/survey/">docs/survey/</a> -- thirteen
+    per-repo Markdown surveys plus index, schema-gaps, and
+    failure-hypothesis docs. Diagrams use
+    <a href="https://mermaid.js.org/syntax/block.html">mermaid
+    block-beta</a> and render in the browser via the official CDN
+    bundle.
+  </p>
+  <p>
+    Run locally: <code>./scripts/serve.sh</code> serves
+    <code>web/</code> on <code>http://127.0.0.1:5264/</code>.
+  </p>
+</footer>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "default",
+    securityLevel: "loose",
+    flowchart: { useMaxWidth: true, htmlLabels: true }
+  });
+</script>
+
+</body>
+</html>
