@@ -14,6 +14,20 @@ reads a `sw-launch.toml`, resolves pinned dependency layers, builds
 artifacts (with caching), assembles a deterministic memory load plan,
 invokes the target emulator, and checks expected output.
 
+```
+sw-launch run     <scenario>     # build + execute + check expectations
+sw-launch build   <scenario>     # build all layers, do not execute
+sw-launch check   <scenario>     # validate config + lockfile only
+sw-launch graph   <scenario>     # print the layer DAG
+sw-launch cache   list|explain|clean
+sw-launch vendor  sync|status
+sw-launch doctor                  # verify host tools
+```
+
+The full schema and validation rules are in
+[`docs/design.md`](docs/design.md). The 13-repo survey that
+grounds the schema is under [`docs/survey/`](docs/survey/).
+
 It exists because every higher-level language project on the COR24
 emulator (Pascal, p-code, OCaml, BASIC, Smalltalk, Forth, APL,
 Macrolisp, PL/SW, SNOBOL4, ...) currently re-invents its own

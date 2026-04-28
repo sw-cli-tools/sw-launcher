@@ -2,5 +2,23 @@
 name = "sw-launcher"
 version = "0.1.0"
 edition = "2024"
+description = "Host-side reproducible scenario launcher for COR24 emulator workflows"
+license = "MIT"
+repository = "https://github.com/sw-cli-tools/sw-launcher"
+
+[lib]
+name = "sw_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sw-launch"
+path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
