@@ -1,6 +1,6 @@
 number = 2
 slug = "listing-symbol-resolution"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 2: listing-symbol-resolution
 
@@ -8,5 +8,6 @@ Promote E0006 from "shape only" (Phase 1..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T19:13:26"
+completed_at = "2026-04-29T09:19:11"
 task_type = "rust"
-commits = []
+commits = ["f7facb55b4b64ee2bdca061025d469146141accf"]
