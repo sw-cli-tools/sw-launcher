@@ -292,6 +292,7 @@ mod rules {
     /// layer to exist.
     fn check_patch_term(term: &str, layer_name: &str, cfg: &Config, out: &mut Vec<Diagnostic>) {
         if term.starts_with("0x")
+            || term.starts_with("sidecar:")
             || term == "self.address"
             || term == "self.end"
             || term == "self.size"
