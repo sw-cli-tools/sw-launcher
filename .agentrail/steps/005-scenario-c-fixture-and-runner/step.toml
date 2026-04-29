@@ -1,6 +1,6 @@
 number = 5
 slug = "scenario-c-fixture-and-runner"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 5: scenario-c-fixture-and-runner
 
@@ -8,5 +8,6 @@ The full nested-interpreter scenario..."""
 role = "production"
 context_files = []
 created_at = "2026-04-29T10:44:35"
+completed_at = "2026-04-29T12:08:12"
 task_type = "rust"
-commits = []
+commits = ["7c95577cf67a515ee4de949edeb05dd868b0b4b2"]
