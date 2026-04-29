@@ -72,17 +72,19 @@ lockfile.
 
 ## Status
 
-**Phase 1 complete (2026-04-28)**: Scenario A runs end to end.
-`sw-launch run echo` against the canonical fixture
-(`tests/fixtures/scenario_a/sw-launch.toml`) builds, executes
-under real `cor24-run`, and asserts UART output. 60 tests across
-11 binaries pass; check / build / run subcommands are wired up.
+**Phase 2 complete (2026-04-29)**: Scenario A and Scenario B both
+run end to end. `sw-launch run pcode-hello` orchestrates a real
+COR24 emulator with a `pvm` runtime + p-code app + cross-layer
+`code_ptr` patch resolved through `pvm.lst`; UART output captured
+matches the expected `"PVM OK\nHello\nHALT"`. 73 tests across 15
+binaries pass.
 
-Phase 2 (Scenario B: COR24 runtime + p-code blob with `code_ptr`
-patch) is described in
-[`docs/saga-phase2-plan.md`](docs/saga-phase2-plan.md). See
+Phase 3 (Scenario C: nested interpreter, heap-limit-only patches,
+UART `<source>+EOT+<stdin>`, plus `ToolKind::PcodeLinker` so
+`sw-launch` invokes `p24-load` directly) is described in
+[`docs/saga-phase3-plan.md`](docs/saga-phase3-plan.md). See
 [`docs/status.md`](docs/status.md) for the live phase tracker
-and the Phase 1 closure summary.
+and Phase 1 + Phase 2 closure summaries.
 
 ## Documentation
 

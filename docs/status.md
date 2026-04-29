@@ -20,8 +20,8 @@ Last updated: 2026-04-28
 | 0.5   | Schema v1.1 (fixed 8x128 KiB grid)     | done 2026-04-28 |
 | 0.6   | Schema v1.2 (named memory profiles)    | done 2026-04-28 |
 | 1     | Skeleton + Scenario A end-to-end       | done 2026-04-28 |
-| 2     | Scenario B (runtime + binary)          | not started; plan in docs/saga-phase2-plan.md |
-| 3     | Scenario C (nested interpreter)        | not started     |
+| 2     | Scenario B end-to-end (runtime + p-code) | done 2026-04-29 |
+| 3     | Scenario C (nested interpreter)        | not started; plan in docs/saga-phase3-plan.md |
 | 4     | Caching, vendor sync, doctor, graph    | not started     |
 | 5     | Multi-target stubs (deferred)          | not started     |
 
@@ -110,16 +110,84 @@ Phase 2 may break the validation logic into a sub-crate (e.g.
 `sw-launcher-validate`) once the rule count grows further; until
 then, the documentation in step commits is the contract.
 
+## Phase 2 closure (2026-04-29)
+
+Phase 2 saga (`sw-launcher-phase2`, 5 steps) closed cleanly.
+Scenario B runs end to end: pvm.bin@0 + hello.p24m@0x010000 +
+`code_ptr` patch resolved through pvm.lst, producing UART
+output `"PVM OK\nHello\nHALT"` from the real emulator.
+
+### Versions the Phase 2 integration tests ran against
+
+| component                | version                              |
+|--------------------------|--------------------------------------|
+| `cor24-run`              | 0.1.0 (Copyright (c) 2026 Michael A Wright; MIT) |
+| `pa24r`                  | sw-cor24-pcode/target/release (sibling) |
+| `p24-load`               | sw-cor24-pcode/target/release (sibling) |
+| `pvm.s`                  | sw-cor24-pcode/vm/pvm.s (sibling)    |
+| Rust toolchain           | rustc 1.94.1 (e408947bf 2026-03-25)  |
+
+### Steps closed in this saga
+
+1. `001-pcode-tool` -- unified `Tool` struct with
+   `ToolKind::Assembler|Pcode`; `SourceSpec::Path|FromPath|Sibling`
+   resolution; pa24r integration test; backward-compat
+   `Assembler` type alias retained.
+2. `002-listing-symbol-resolution` -- E0006 promoted to fully
+   resolved; cross-layer `<layer>.<symbol>` patches resolve
+   through `Listing.resolve` + load address; Wagner-Fischer
+   Levenshtein "did you mean" suggestions for typos in layer
+   and symbol names.
+3. `003-pcode-image-layer` -- `assemble_artifacts` dispatches by
+   `Layer.kind`: assembler -> Tool(Assembler); pcode -> Tool
+   (Pcode) lazy-init; binary / pcode-image -> pass-through.
+   `build_scenario` rewritten to call shared `assemble_artifacts`.
+4. `004-scenario-b-fixture-and-runner` -- `tests/scenario_b.rs`
+   pre-builds pvm.bin + hello.p24m via cor24-run + pa24r +
+   p24-load, generates a tempdir TOML with kind=pcode-image
+   pass-through, runs `sw-launch run pcode-hello` end to end.
+   Two tests (happy + misaligned-patch); both pass on the dev
+   machine when all four tools are present.
+5. `005-phase2-status` -- this entry; closes the saga and
+   drafts `docs/saga-phase3-plan.md`.
+
+### What runs today (Phase 2)
+
+```bash
+# Test fixture pre-builds pvm.bin / hello.p24m, then:
+sw-launch run pcode-hello --config <tempdir>/sw-launch.toml
+# -> "PVM OK\nHello\nHALT"
+# exit 0
+```
+
+### Carry-forward sw-checklist failures (7)
+
+Same root constraint conflict documented in step 006 / 008 /
+Phase-2-step-1. The validation + manifest + cli-orchestration
+surface area doesn't decompose cleanly into the per-file caps
+without pushing the crate-module count over its own cap.
+Possible Phase 5 remediation: extract `validate` + `tool` + 
+`manifest` into sub-crates so each gets its own per-module
+budget.
+
+  File LOC [validate.rs]:                           744 lines
+  Module Function Count [validate.rs]:              23 fns
+  Module Function Count [manifest.rs]:              8 fns
+  Function LOC ['build' in tool.rs]:                53 lines
+  Function LOC ['check_patch_term' in validate.rs]: 61 lines
+  Function LOC ['assemble_artifacts' in cli.rs]:    88 lines
+  Crate Module Count:                               8 modules
+
 ## What's next
 
-Phase 2 (`sw-launcher-phase2`) is described in
-[`docs/saga-phase2-plan.md`](saga-phase2-plan.md). It adds
-Scenario B: COR24 runtime at 0 plus a p-code blob at a higher
-address with a `code_ptr` patch -- the smallest meaningful test
-that the launcher can express the layered shape that today's
-sw-cor24-pcode and sw-cor24-pascal demos use. After Phase 2,
-Phase 3 adds Scenario C (nested interpreter, source via UART,
-heap-limit-only patches) which is the tuplet shape.
+Phase 3 (`sw-launcher-phase3`) is described in
+[`docs/saga-phase3-plan.md`](saga-phase3-plan.md). It adds
+Scenario C (nested interpreter, source via UART with EOT,
+heap-limit-only patches, reserved interpreter heap+stack
+segments) -- the tuplet / sw-cor24-ocaml shape. Phase 3 also
+introduces `ToolKind::PcodeLinker` so `sw-launch` can invoke
+`p24-load` directly rather than relying on the test fixture
+to pre-link.
 
 ## Schema v1.1 (2026-04-28)
 
