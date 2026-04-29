@@ -329,6 +329,137 @@ fn sidecar_with_non_hex_contents_errors() {
     assert!(msg.contains("garbage.txt"), "got: {msg}");
 }
 
+fn uart_two_chunk_toml(input_a: &Utf8Path, input_b: &Utf8Path) -> String {
+    format!(
+        r#"
+schema_version = 1
+[project]
+name = "uart-multi"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = {{ sram = {{ start = "0x000000", end = "0x0FFFFF" }}, ebr_stack = {{ start = "0xFEEC00", end = "0xFEF7FF" }}, mmio = {{ start = "0xFF0000", end = "0xFFFFFF" }} }}
+[scenarios.demo]
+target = "cor24"
+layers = ["src", "stdin"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.src]
+kind = "text"
+input = "{a}"
+[layers.src.load]
+method = "uart"
+max_bytes = 16384
+terminator = "EOT"
+[layers.stdin]
+kind = "text"
+input = "{b}"
+[layers.stdin.load]
+method = "uart"
+max_bytes = 16384
+terminator = "none"
+"#,
+        a = input_a,
+        b = input_b
+    )
+}
+
+#[test]
+fn two_uart_chunks_in_declared_order_concatenate_with_terminators() {
+    let dir = tempdir_utf8();
+    let a = write_sidecar(&dir, "a.ml", "let x = 1 + 2;\n");
+    let b = write_sidecar(&dir, "b.txt", "exit 0\n");
+    let cfg = parse(&uart_two_chunk_toml(&a, &b));
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap();
+    let argv = plan.cor24_argv();
+    let payload_idx = argv.iter().position(|s| s == "--uart-input").unwrap() + 1;
+    // src bytes + EOT (0x04) + stdin bytes (no terminator).
+    let expected = "let x = 1 + 2;\n\u{04}exit 0\n";
+    assert_eq!(argv[payload_idx], expected);
+}
+
+#[test]
+fn terminator_none_appends_no_byte() {
+    let dir = tempdir_utf8();
+    let a = write_sidecar(&dir, "x.txt", "x");
+    let toml = format!(
+        r#"
+schema_version = 1
+[project]
+name = "uart-none"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = {{ sram = {{ start = "0x000000", end = "0x0FFFFF" }}, ebr_stack = {{ start = "0xFEEC00", end = "0xFEF7FF" }}, mmio = {{ start = "0xFF0000", end = "0xFFFFFF" }} }}
+[scenarios.demo]
+target = "cor24"
+layers = ["one"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.one]
+kind = "text"
+input = "{a}"
+[layers.one.load]
+method = "uart"
+max_bytes = 1024
+terminator = "none"
+"#,
+        a = a
+    );
+    let cfg = parse(&toml);
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap();
+    let argv = plan.cor24_argv();
+    let payload_idx = argv.iter().position(|s| s == "--uart-input").unwrap() + 1;
+    assert_eq!(argv[payload_idx], "x");
+}
+
+#[test]
+fn empty_input_file_just_terminator() {
+    let dir = tempdir_utf8();
+    let a = write_sidecar(&dir, "empty.txt", "");
+    let toml = format!(
+        r#"
+schema_version = 1
+[project]
+name = "uart-empty"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = {{ sram = {{ start = "0x000000", end = "0x0FFFFF" }}, ebr_stack = {{ start = "0xFEEC00", end = "0xFEF7FF" }}, mmio = {{ start = "0xFF0000", end = "0xFFFFFF" }} }}
+[scenarios.demo]
+target = "cor24"
+layers = ["one"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.one]
+kind = "text"
+input = "{a}"
+[layers.one.load]
+method = "uart"
+max_bytes = 1024
+terminator = "EOT"
+"#,
+        a = a
+    );
+    let cfg = parse(&toml);
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap();
+    let argv = plan.cor24_argv();
+    let payload_idx = argv.iter().position(|s| s == "--uart-input").unwrap() + 1;
+    assert_eq!(argv[payload_idx], "\u{04}");
+}
+
 #[test]
 fn reserved_heap_segment_appears_in_segments_not_loads() {
     let toml = r#"

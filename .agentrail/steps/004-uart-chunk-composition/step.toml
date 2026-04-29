@@ -1,6 +1,6 @@
 number = 4
 slug = "uart-chunk-composition"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 4: uart-chunk-composition
 
