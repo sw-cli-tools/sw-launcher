@@ -1,0 +1,11 @@
+{
+  "task_type": "rust",
+  "state": {
+    "number": 2,
+    "step": "sidecar-patch-values"
+  },
+  "action": "TDD red->green; signature change rippled cleanly through cli and tests; E0019 wording uses path+source-term in message for actionable error",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-29T11:28:40"
+}
