@@ -72,19 +72,21 @@ lockfile.
 
 ## Status
 
-**Phase 2 complete (2026-04-29)**: Scenario A and Scenario B both
-run end to end. `sw-launch run pcode-hello` orchestrates a real
-COR24 emulator with a `pvm` runtime + p-code app + cross-layer
-`code_ptr` patch resolved through `pvm.lst`; UART output captured
-matches the expected `"PVM OK\nHello\nHALT"`. 73 tests across 15
-binaries pass.
+**Phase 3 complete (2026-04-29)**: Scenarios A, B, and C all run
+end to end against the real COR24 emulator. `sw-launch run
+nested-demo` builds a Pascal-compiled OCaml interpreter on top of
+the p-code VM, patches `code_ptr` and `heap_limit` from sidecar
+files in the OCaml repo's build dir, delivers the source program
+through UART with EOT, and asserts on the captured UART output.
+86 tests across 16 binaries pass; the integration tests gate
+cleanly on the presence of `cor24-run`, `pa24r`, `p24-load`, and
+the vendored sw-cor24-* sibling repos.
 
-Phase 3 (Scenario C: nested interpreter, heap-limit-only patches,
-UART `<source>+EOT+<stdin>`, plus `ToolKind::PcodeLinker` so
-`sw-launch` invokes `p24-load` directly) is described in
-[`docs/saga-phase3-plan.md`](docs/saga-phase3-plan.md). See
-[`docs/status.md`](docs/status.md) for the live phase tracker
-and Phase 1 + Phase 2 closure summaries.
+Phase 4 (disk-persistent content-addressed cache, `sw-launch.lock`
+with vendor-drift detection, `sw-launch doctor`, `sw-launch graph`)
+is described in [`docs/saga-phase4-plan.md`](docs/saga-phase4-plan.md).
+See [`docs/status.md`](docs/status.md) for the live phase tracker
+and Phase 1 + Phase 2 + Phase 3 closure summaries.
 
 ## Documentation
 

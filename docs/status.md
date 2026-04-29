@@ -1,6 +1,6 @@
 # sw-launcher Status
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
 
 ## At a glance
 
@@ -21,8 +21,8 @@ Last updated: 2026-04-28
 | 0.6   | Schema v1.2 (named memory profiles)    | done 2026-04-28 |
 | 1     | Skeleton + Scenario A end-to-end       | done 2026-04-28 |
 | 2     | Scenario B end-to-end (runtime + p-code) | done 2026-04-29 |
-| 3     | Scenario C (nested interpreter)        | not started; plan in docs/saga-phase3-plan.md |
-| 4     | Caching, vendor sync, doctor, graph    | not started     |
+| 3     | Scenario C (nested interpreter)        | done 2026-04-29 |
+| 4     | Caching, vendor sync, doctor, graph    | not started; plan in docs/saga-phase4-plan.md |
 | 5     | Multi-target stubs (deferred)          | not started     |
 
 ## Phase 1 closure (2026-04-28)
@@ -178,16 +178,117 @@ budget.
   Function LOC ['assemble_artifacts' in cli.rs]:    88 lines
   Crate Module Count:                               8 modules
 
+## Phase 3 closure (2026-04-29)
+
+Phase 3 saga (`sw-launcher-phase3`, 6 steps) closed cleanly.
+Scenario C runs end to end: pvm.bin@0 + ocaml.p24m@0x040000
+with `code_ptr` and `heap_limit` patches read from the
+sw-cor24-ocaml repo's sidecar files; OCaml source delivered
+through UART with EOT terminator. The real emulator evaluates
+`let x = 1 + 2 in print_int x` and the captured UART payload
+is `"PVM OK\n> let x = 1 + 2 in print_int x\n3\nHALT"`.
+
+### Versions the Phase 3 integration tests ran against
+
+| component                | version                              |
+|--------------------------|--------------------------------------|
+| `cor24-run`              | 0.1.0 (Copyright (c) 2026 Michael A Wright; MIT) |
+| `pa24r`                  | sw-cor24-pcode/target/release (sibling) |
+| `p24-load`               | sw-cor24-pcode/target/release (sibling) |
+| `pvm.bin`                | sw-cor24-ocaml/build/pvm.bin (vendored from sibling build) |
+| `ocaml.p24m`             | sw-cor24-ocaml/build/ocaml.p24m (Pascal -> p-code, p24-load-linked) |
+| Rust toolchain           | rustc 1.94.1 (e408947bf 2026-03-25)  |
+
+### Steps closed in this saga
+
+1. `001-pcode-linker` -- `ToolKind::PcodeLinker` added;
+   `assemble_artifacts` extends the pcode arm to chain
+   pa24r .spc -> .p24, then p24-load --load-addr <addr> ->
+   .p24m, dropping the test-fixture pre-link.
+2. `002-sidecar-patch-values` -- `value = "sidecar:<path>"`
+   patch form (schema gap B1); `LoadPlan::build` reads the
+   file relative to config_dir, parses one hex literal
+   (with or without `0x`); negative tests for missing file
+   and non-hex contents.
+3. `003-reserved-heap-segments` -- non-embedded
+   `kind = "heap" | "stack" | "bss"` segments contribute to
+   `LoadPlan.segments` (and overlap accounting / E0003)
+   without entering `memory_loads`; cor24-run's default
+   zero-init handles the range without an extra argv flag.
+4. `004-uart-chunk-composition` -- multi-chunk UART payloads
+   concatenate in declared order, each chunk followed by
+   its terminator (EOT / ETX / EOF / none); golden-hex tests
+   for the byte-string the emulator receives.
+5. `005-scenario-c-fixture-and-runner` --
+   `tests/fixtures/scenario_c/demo.ml` with
+   `let x = 1 + 2 in print_int x` + `tests/scenario_c.rs`:
+   end-to-end test against real cor24-run + ocaml build
+   artifacts; oversized-source test fires E0004 via
+   `sw-launch check`. Validate's `check_patch_term`
+   recognizes the `sidecar:` prefix (was previously misread
+   as an undeclared cross-layer symbol).
+6. `006-phase3-status` -- this entry; closes the saga and
+   drafts `docs/saga-phase4-plan.md`.
+
+### What runs today (Phase 3)
+
+```bash
+# In a tempdir set up by tests/scenario_c.rs:
+sw-launch run nested-demo --config <tempdir>/sw-launch.toml
+# -> "PVM OK"
+# -> "> let x = 1 + 2 in print_int x"
+# -> "3"
+# -> "HALT"
+# exit 0
+```
+
+### Carry-forward sw-checklist failures (9)
+
+Same root constraint conflict documented in step 006 / 008 /
+Phase 2 step 1. The validation + manifest + cli-orchestration
+surface area doesn't decompose cleanly into the per-file caps
+without pushing the crate-module count over its own cap.
+Phase 4 step 1 begins the documented remediation by extracting
+`tool` + `cache` into a `sw-launcher-tool` sub-crate; Phase 5
+finishes the split for `validate` and `manifest`.
+
+  File LOC [validate.rs]:                              817 lines
+  File LOC [cli.rs]:                                   526 lines
+  Module Function Count [validate.rs]:                 23 fns
+  Module Function Count [manifest.rs]:                 8 fns
+  Function LOC ['build' in tool.rs]:                   53 lines
+  Function LOC ['resolve_patch_term' in manifest.rs]:  62 lines
+  Function LOC ['check_patch_term' in validate.rs]:    62 lines
+  Function LOC ['assemble_artifacts' in cli.rs]:       120 lines
+  Crate Module Count:                                  8 modules
+
+### Test-corpus growth across phases
+
+| phase  | tests | binaries | new end-to-end fixtures   |
+|--------|-------|----------|---------------------------|
+| Phase 1 |  60  |  11      | scenario_a (echo, UART)   |
+| Phase 2 |  73  |  15      | scenario_b (pvm + p-code) |
+| Phase 3 |  86  |  16      | scenario_c (nested OCaml) |
+
 ## What's next
 
-Phase 3 (`sw-launcher-phase3`) is described in
-[`docs/saga-phase3-plan.md`](saga-phase3-plan.md). It adds
-Scenario C (nested interpreter, source via UART with EOT,
-heap-limit-only patches, reserved interpreter heap+stack
-segments) -- the tuplet / sw-cor24-ocaml shape. Phase 3 also
-introduces `ToolKind::PcodeLinker` so `sw-launch` can invoke
-`p24-load` directly rather than relying on the test fixture
-to pre-link.
+Phase 4 (`sw-launcher-phase4`) is described in
+[`docs/saga-phase4-plan.md`](saga-phase4-plan.md). It hardens
+what Phases 1-3 produced rather than adding new scenario
+shapes:
+
+1. Disk-persistent content-addressed cache under
+   `~/.cache/sw-launch/` (replaces the in-process HashMap).
+2. `cache list / explain / clean` subcommands.
+3. `sw-launch.lock` writer/reader + drift detection
+   (E0040..E0042).
+4. `sw-launch doctor` host-environment checker.
+5. `sw-launch graph <scenario>` text + `--json` DAG output.
+6. Status close-out + Phase 5 seed.
+
+Phase 4 step 1 begins the sub-crate extraction (`sw-launcher-
+tool`) that the running sw-checklist trade-off list
+documents as the planned remediation.
 
 ## Schema v1.1 (2026-04-28)
 
