@@ -1,0 +1,11 @@
+{
+  "task_type": "rust",
+  "state": {
+    "number": 4,
+    "step": "scenario-b-fixture-and-runner"
+  },
+  "action": "TDD probe-then-test: manually exercised pa24r+p24-load+cor24-run loop to verify HELLO output before writing tests; used kind=pcode-image pass-through to defer p24-load integration; parse_symbol_addr handles the dual-code_ptr label quirk in pvm.lst",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-29T10:21:28"
+}
