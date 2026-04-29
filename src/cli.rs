@@ -244,11 +244,19 @@ fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
     Ok(())
 }
 
-/// Assemble every assembler-kind layer in `scenario` and return a
-/// map of name -> (built artifact path, parsed listing). Layer
-/// `input` paths in TOML are interpreted relative to the config
-/// file's directory (matching how every survey-repo run script
-/// behaves).
+/// Assemble (or pass through) every layer in `scenario`, returning
+/// a map of name -> (artifact path, parsed listing). Dispatches on
+/// `Layer.kind`:
+///
+/// - `"assembler"` -> Tool with ToolKind::Assembler (cor24-run).
+/// - `"pcode"` -> Tool with ToolKind::Pcode (pa24r), lazy-
+///   initialized on first encounter so scenarios that don't use
+///   p-code never require pa24r on PATH.
+/// - `"binary"` / `"pcode-image"` -> no build; the input file is
+///   the artifact, with an empty listing.
+///
+/// Layer `input` paths are interpreted relative to the config
+/// file's directory.
 fn assemble_artifacts(
     cfg: &Config,
     scen: &Scenario,
@@ -262,13 +270,11 @@ fn assemble_artifacts(
         .unwrap_or_else(|| Utf8PathBuf::from("."));
     let out_root = cfg_dir.join(".sw-launch").join("build").join(scenario_name);
     let mut by_layer: BTreeMap<String, ArtifactEntry> = BTreeMap::new();
+    let mut pcode: Option<Tool> = None;
     for layer_name in &scen.layers {
         let Some(layer) = cfg.layers.get(layer_name) else {
             continue;
         };
-        if layer.kind != "assembler" {
-            continue;
-        }
         let Some(input) = layer.input.as_deref() else {
             continue;
         };
@@ -277,23 +283,65 @@ fn assemble_artifacts(
         } else {
             cfg_dir.join(input)
         };
-        let layer_dir = out_root.join(layer_name);
-        let job = BuildJob {
-            layer_name: layer_name.clone(),
-            input: resolved_input,
-            output_bin: layer_dir.join(format!("{layer_name}.bin")),
-            output_lst: layer_dir.join(format!("{layer_name}.lst")),
-            extra_args: Vec::new(),
-        };
-        let out = asm.build(&job)?;
-        let lst_text = std::fs::read_to_string(out.listing.as_std_path()).unwrap_or_default();
-        by_layer.insert(
-            layer_name.clone(),
-            ArtifactEntry {
-                artifact: out.artifact,
-                listing: Listing::parse(&lst_text),
-            },
-        );
+        match layer.kind.as_str() {
+            "assembler" => {
+                let layer_dir = out_root.join(layer_name);
+                let job = BuildJob {
+                    layer_name: layer_name.clone(),
+                    input: resolved_input,
+                    output_bin: layer_dir.join(format!("{layer_name}.bin")),
+                    output_lst: layer_dir.join(format!("{layer_name}.lst")),
+                    extra_args: Vec::new(),
+                };
+                let out = asm.build(&job)?;
+                let lst_text =
+                    std::fs::read_to_string(out.listing.as_std_path()).unwrap_or_default();
+                by_layer.insert(
+                    layer_name.clone(),
+                    ArtifactEntry {
+                        artifact: out.artifact,
+                        listing: Listing::parse(&lst_text),
+                    },
+                );
+            }
+            "pcode" => {
+                if pcode.is_none() {
+                    pcode = Some(Tool::from_source(
+                        &SourceSpec::FromPath {
+                            binary: "pa24r".into(),
+                        },
+                        &cfg_dir,
+                        ToolKind::Pcode,
+                    )?);
+                }
+                let layer_dir = out_root.join(layer_name);
+                let job = BuildJob {
+                    layer_name: layer_name.clone(),
+                    input: resolved_input,
+                    output_bin: layer_dir.join(format!("{layer_name}.p24")),
+                    output_lst: Utf8PathBuf::new(),
+                    extra_args: Vec::new(),
+                };
+                let out = pcode.as_mut().unwrap().build(&job)?;
+                by_layer.insert(
+                    layer_name.clone(),
+                    ArtifactEntry {
+                        artifact: out.artifact,
+                        listing: Listing::default(),
+                    },
+                );
+            }
+            "binary" | "pcode-image" => {
+                by_layer.insert(
+                    layer_name.clone(),
+                    ArtifactEntry {
+                        artifact: resolved_input,
+                        listing: Listing::default(),
+                    },
+                );
+            }
+            _ => continue,
+        }
     }
     Ok(Artifacts { by_layer })
 }
@@ -391,15 +439,16 @@ fn check_expectations(expect: &Expect, uart: &str, exit_code: i32) -> Result<()>
 }
 
 /// Implementation of `sw-launch build <scenario>`. Loads config,
-/// finds every assembler-kind layer with an `input` set, builds
-/// it via `Assembler` (with in-process memoization), prints the
-/// resulting artifact path to stdout. No emulator is spawned.
+/// reuses `assemble_artifacts` to dispatch on `Layer.kind`
+/// (assembler / pcode / binary / pcode-image), prints each
+/// produced artifact path. No emulator is spawned.
 fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
     let cfg = Config::from_path(config_path)?;
     let scen = cfg
         .scenarios
         .get(scenario)
-        .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?;
+        .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?
+        .clone();
     let mut asm = Tool::from_source(
         &SourceSpec::FromPath {
             binary: "cor24-run".into(),
@@ -407,32 +456,9 @@ fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         config_path.parent().unwrap_or_else(|| Utf8Path::new(".")),
         ToolKind::Assembler,
     )?;
-    let out_root = config_path
-        .parent()
-        .map(|p| p.join(".sw-launch").join("build").join(scenario))
-        .unwrap_or_else(|| Utf8PathBuf::from(".sw-launch/build").join(scenario));
-    for layer_name in &scen.layers {
-        let Some(layer) = cfg.layers.get(layer_name) else {
-            continue;
-        };
-        if layer.kind != "assembler" {
-            continue;
-        }
-        let Some(input) = layer.input.as_deref() else {
-            continue;
-        };
-        let layer_dir = out_root.join(layer_name);
-        let bin = layer_dir.join(format!("{layer_name}.bin"));
-        let lst = layer_dir.join(format!("{layer_name}.lst"));
-        let job = BuildJob {
-            layer_name: layer_name.clone(),
-            input: Utf8PathBuf::from(input),
-            output_bin: bin.clone(),
-            output_lst: lst,
-            extra_args: Vec::new(),
-        };
-        asm.build(&job)?;
-        println!("built {layer_name} -> {bin}");
+    let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
+    for (layer_name, entry) in &artifacts.by_layer {
+        println!("built {layer_name} -> {}", entry.artifact);
     }
     Ok(())
 }

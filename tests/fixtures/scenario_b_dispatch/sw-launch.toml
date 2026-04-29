@@ -1,0 +1,48 @@
+schema_version = 1
+
+[project]
+name = "scenario-b-dispatch"
+
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+
+[targets.cor24.regions]
+sram      = { start = "0x000000", end = "0x0FFFFF" }
+ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF", role = "hw-stack" }
+mmio      = { start = "0xFF0000", end = "0xFFFFFF" }
+
+[scenarios.dispatch]
+target = "cor24"
+layers = ["asm_part", "pcode_part", "binary_part"]
+entry  = "0x000000"
+
+[scenarios.dispatch.run]
+mode       = "batch"
+max_cycles = 1000
+
+[layers.asm_part]
+kind = "assembler"
+input = "echo.s"
+artifact = "echo.bin"
+[layers.asm_part.load]
+method  = "memory"
+address = "0x000000"
+
+[layers.pcode_part]
+kind = "pcode"
+input = "hello.spc"
+artifact = "hello.p24"
+[layers.pcode_part.load]
+method  = "memory"
+address = "0x010000"
+
+[layers.binary_part]
+kind = "binary"
+input = "data.bin"
+[layers.binary_part.load]
+method  = "memory"
+address = "0x080000"

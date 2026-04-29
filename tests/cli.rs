@@ -147,6 +147,28 @@ fn doctor_returns_not_implemented() {
 }
 
 #[test]
+fn build_dispatches_assembler_pcode_and_binary_layers() {
+    // Gated on both cor24-run AND pa24r being on PATH. The fixture
+    // has one layer of each kind; the test asserts all three
+    // produced artifact paths appear on stdout.
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    let on_path = |bin: &str| std::env::split_paths(&path_var).any(|p| p.join(bin).is_file());
+    if !on_path("cor24-run") || !on_path("pa24r") {
+        eprintln!("cor24-run or pa24r not on PATH; skipping dispatch test");
+        return;
+    }
+    let mut fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fixture.push("tests/fixtures/scenario_b_dispatch/sw-launch.toml");
+    cmd()
+        .args(["build", "dispatch", "--config", fixture.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("asm_part"))
+        .stdout(contains("pcode_part"))
+        .stdout(contains("binary_part"));
+}
+
+#[test]
 fn unknown_subcommand_fails_cleanly() {
     cmd()
         .arg("teleport")
