@@ -1,0 +1,1 @@
+Phase 3 complete: Scenarios A, B, C all run end to end against real COR24 emulator. Closing to open Phase 4 (disk cache + lockfile + doctor + graph).
