@@ -1,6 +1,6 @@
 number = 3
 slug = "reserved-heap-segments"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 3: reserved-heap-segments
 
@@ -8,5 +8,6 @@ Make non-embedded `kind = "heap" | "stack" ..."""
 role = "production"
 context_files = []
 created_at = "2026-04-29T10:44:35"
+completed_at = "2026-04-29T11:31:32"
 task_type = "rust"
-commits = []
+commits = ["7f0543cb19281f91b43f85a4ea4b49e07b4a0f8a"]

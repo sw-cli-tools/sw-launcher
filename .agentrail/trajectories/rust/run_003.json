@@ -1,0 +1,11 @@
+{
+  "task_type": "rust",
+  "state": {
+    "number": 3,
+    "step": "reserved-heap-segments"
+  },
+  "action": "TDD red->green; structural-only overlap (skips listing-resolved sizes for assembler/pcode kinds); inline 4-tuple representation in check_overlap to keep the function compact",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-29T11:31:32"
+}
