@@ -1,0 +1,1 @@
+UART chunk composition tests: 3 new manifest tests lock the multi-chunk byte concatenation + terminator behavior. No production-code changes -- existing logic was already correct. Tests cover (a) two chunks with EOT then none -> 'a\\u{04}b'; (b) single chunk none -> 'a'; (c) empty input + EOT -> '\\u{04}'. 84 tests green; same 9 documented sw-checklist trade-offs.
