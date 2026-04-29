@@ -1,0 +1,1 @@
+Closed Phase 3 saga: docs/status.md gains a Phase 3 closure section with all 6 step outcomes + tool versions; docs/saga-phase4-plan.md is the actionable Phase 4 seed (disk cache + lockfile + doctor + graph, with sw-launcher-tool sub-crate extraction in step 1); README status bumped to Phase 3 complete.
