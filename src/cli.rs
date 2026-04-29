@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use crate::config::{Config, Expect, Scenario};
 use crate::error::{Error, Result};
 use crate::manifest::{ArtifactEntry, Artifacts, LoadPlan};
-use crate::tool::{Assembler, BuildJob, Listing};
+use crate::tool::{Assembler, BuildJob, Listing, SourceSpec, Tool, ToolKind};
 use crate::validate;
 
 /// Long version string with copyright, license, repo, build host /
@@ -227,7 +227,13 @@ fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         }
         return Err(Error::cli("validation failed; run aborted".to_string()));
     }
-    let mut asm = Assembler::from_path()?;
+    let mut asm = Tool::from_source(
+        &SourceSpec::FromPath {
+            binary: "cor24-run".into(),
+        },
+        config_path.parent().unwrap_or_else(|| Utf8Path::new(".")),
+        ToolKind::Assembler,
+    )?;
     let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
     let plan = LoadPlan::build(&cfg, scenario, &artifacts)?;
     let (uart, exit_code) = run_emulator(&asm.tool_path, &plan, &scen)?;
@@ -394,7 +400,13 @@ fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         .scenarios
         .get(scenario)
         .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?;
-    let mut asm = Assembler::from_path()?;
+    let mut asm = Tool::from_source(
+        &SourceSpec::FromPath {
+            binary: "cor24-run".into(),
+        },
+        config_path.parent().unwrap_or_else(|| Utf8Path::new(".")),
+        ToolKind::Assembler,
+    )?;
     let out_root = config_path
         .parent()
         .map(|p| p.join(".sw-launch").join("build").join(scenario))

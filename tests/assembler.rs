@@ -4,13 +4,19 @@
 
 use std::fs;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use sw_launcher::listing::Listing;
-use sw_launcher::tool::{Assembler, BuildJob};
+use sw_launcher::tool::{BuildJob, SourceSpec, Tool, ToolKind};
 
 #[test]
 fn assemble_echo_fixture_with_real_cor24_run() {
-    let Ok(mut asm) = Assembler::from_path() else {
+    let Ok(mut asm) = Tool::from_source(
+        &SourceSpec::FromPath {
+            binary: "cor24-run".into(),
+        },
+        Utf8Path::new("/"),
+        ToolKind::Assembler,
+    ) else {
         eprintln!("cor24-run not on PATH; skipping integration test");
         return;
     };
