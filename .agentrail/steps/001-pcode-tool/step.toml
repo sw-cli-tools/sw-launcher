@@ -1,6 +1,6 @@
 number = 1
 slug = "pcode-tool"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 1: pcode-tool
 
@@ -8,5 +8,6 @@ Add the `PcodeAssembler` that wraps `pa24r <input.spc> ..."""
 role = "production"
 context_files = []
 created_at = "2026-04-28T19:13:26"
+completed_at = "2026-04-29T08:55:35"
 task_type = "rust"
-commits = []
+commits = ["b4621afe7e3798ae3dc248809c7846ddf8fdc256"]
