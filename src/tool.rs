@@ -31,6 +31,9 @@ pub enum ToolKind {
     Assembler,
     /// `pa24r <input> -o <out.p24>`
     Pcode,
+    /// `p24-load <input.p24> -o <out.p24m> [--load-addr <addr>]`
+    /// (caller passes `--load-addr` via `BuildJob.extra_args`).
+    PcodeLinker,
 }
 
 /// One build request: input source, where to write outputs,
@@ -169,6 +172,7 @@ impl Tool {
         match self.kind {
             ToolKind::Assembler => cmd.args(["--assemble".as_ref(), in_p, out_p, lst_p]),
             ToolKind::Pcode => cmd.args([in_p, "-o".as_ref(), out_p]),
+            ToolKind::PcodeLinker => cmd.args([in_p, "-o".as_ref(), out_p]),
         };
         cmd.args(&job.extra_args);
         let output = cmd.output().map_err(|source| Error::Io { source })?;
@@ -180,10 +184,9 @@ impl Tool {
                 self.tool_path, output.status
             )));
         }
-        let listing = if self.kind == ToolKind::Assembler {
-            job.output_lst.clone()
-        } else {
-            Utf8PathBuf::new()
+        let listing = match self.kind {
+            ToolKind::Assembler => job.output_lst.clone(),
+            ToolKind::Pcode | ToolKind::PcodeLinker => Utf8PathBuf::new(),
         };
         let out = BuildOutput {
             artifact: job.output_bin.clone(),

@@ -2,10 +2,12 @@
 //! with `code_ptr` patch. Skipped (with a one-line note on stderr)
 //! if any of the required tools / source files are missing.
 //!
-//! The test pre-links the p-code app via `pa24r` + `p24-load`
-//! before invoking `sw-launch`. Phase 3 will add pcode-linker
-//! integration to the launcher itself; for Phase 2 we use the
-//! `kind = "pcode-image"` pass-through path.
+//! Phase 3 step 1 added `ToolKind::PcodeLinker` to sw-launch, so
+//! the test no longer pre-runs pa24r or p24-load itself --
+//! `kind = "pcode"` triggers the launcher's own pa24r + p24-load
+//! chain. The test still pre-builds pvm.bin (sw-launch only
+//! finds cor24-run on PATH automatically; pre-assembling avoids
+//! gating on a sibling pvm.s path inside the launcher).
 
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
@@ -62,38 +64,21 @@ fn tmp_dir(name: &str) -> PathBuf {
     p
 }
 
-/// Pre-build pvm.bin (cor24-run --assemble), hello.p24 (pa24r),
-/// hello.p24m (p24-load --load-addr 0x010000) into `out`.
-/// Returns the resolved code_ptr address.
-fn prebuild(out: &Path, pa24r: &Path, p24load: &Path) -> u32 {
+/// Pre-build pvm.bin via `cor24-run --assemble` (so the launcher
+/// can use pvm as a `kind = "binary"` layer without needing a
+/// sibling pvm.s path baked into TOML). Returns the resolved
+/// code_ptr address. The pcode app's pa24r + p24-load chain now
+/// runs inside sw-launch via Phase 3 step 1.
+fn prebuild_pvm(out: &Path) -> u32 {
     let pvm_src = pvm_s().expect("pvm.s exists per gate above");
     let pvm_bin = out.join("pvm.bin");
     let pvm_lst = out.join("pvm.lst");
-    let s1 = StdCommand::new("cor24-run")
+    let s = StdCommand::new("cor24-run")
         .args(["--assemble"])
         .args([pvm_src.as_path(), &pvm_bin, &pvm_lst])
         .status()
         .unwrap();
-    assert!(s1.success(), "cor24-run --assemble pvm.s failed");
-    let hello_p24 = out.join("hello.p24");
-    let s2 = StdCommand::new(pa24r)
-        .arg(fixture_dir().join("hello.spc"))
-        .arg("-o")
-        .arg(&hello_p24)
-        .status()
-        .unwrap();
-    assert!(s2.success(), "pa24r hello.spc failed");
-    let hello_p24m = out.join("hello.p24m");
-    let s3 = StdCommand::new(p24load)
-        .arg(&hello_p24)
-        .args(["--load-addr", "0x010000", "-o"])
-        .arg(&hello_p24m)
-        .status()
-        .unwrap();
-    assert!(s3.success(), "p24-load hello.p24 failed");
-    // Parse code_ptr address from pvm.lst. The fixture's listing
-    // typically has two `code_ptr:` labels (placeholder + init);
-    // the parser overwrites with the latest, which is what we want.
+    assert!(s.success(), "cor24-run --assemble pvm.s failed");
     let lst = std::fs::read_to_string(&pvm_lst).unwrap();
     parse_symbol_addr(&lst, "code_ptr").expect("code_ptr in pvm.lst")
 }
@@ -124,7 +109,7 @@ fn parse_symbol_addr(text: &str, sym: &str) -> Option<u32> {
     last
 }
 
-fn write_toml(dest: &Path, pvm_bin: &Path, hello_p24m: &Path, code_ptr: u32) {
+fn write_toml(dest: &Path, pvm_bin: &Path, hello_spc: &Path, code_ptr: u32) {
     let toml = format!(
         r#"schema_version = 1
 
@@ -165,8 +150,8 @@ method  = "memory"
 address = "0x000000"
 
 [layers.pcode_app]
-kind = "pcode-image"
-input = "{hello_p24m}"
+kind = "pcode"
+input = "{hello_spc}"
 patches = [
   {{ target = "0x{code_ptr:06X}", value = "pcode_app.address" }},
 ]
@@ -175,40 +160,63 @@ method  = "memory"
 address = "0x010000"
 "#,
         pvm_bin = pvm_bin.display(),
-        hello_p24m = hello_p24m.display(),
+        hello_spc = hello_spc.display(),
         code_ptr = code_ptr,
     );
     std::fs::write(dest, toml).unwrap();
 }
 
-fn skip_unless_ready() -> Option<(PathBuf, PathBuf, PathBuf)> {
+fn skip_unless_ready() -> Option<PathBuf> {
     if !on_path("cor24-run") {
         eprintln!("cor24-run not on PATH; skipping scenario_b test");
         return None;
     }
-    let pa24r = find_pcode_tool("pa24r")?;
-    let p24load = find_pcode_tool("p24-load")?;
+    if find_pcode_tool("pa24r").is_none() {
+        eprintln!("pa24r not findable; skipping scenario_b test");
+        return None;
+    }
+    if find_pcode_tool("p24-load").is_none() {
+        eprintln!("p24-load not findable; skipping scenario_b test");
+        return None;
+    }
     let _pvm = pvm_s()?;
-    let out = tmp_dir("scenario-b");
-    Some((out, pa24r, p24load))
+    Some(tmp_dir("scenario-b"))
+}
+
+fn hello_spc() -> PathBuf {
+    fixture_dir().join("hello.spc")
+}
+
+/// Build a PATH that includes the pa24r + p24-load sibling
+/// directories, so the sw-launch subprocess's `FromPath` lookup
+/// succeeds even when the user's outer PATH doesn't include them.
+fn extended_path() -> std::ffi::OsString {
+    let mut path = std::env::var_os("PATH").unwrap_or_default();
+    for bin in ["pa24r", "p24-load"] {
+        if let Some(p) = find_pcode_tool(bin)
+            && let Some(dir) = p.parent()
+        {
+            path.push(":");
+            path.push(dir);
+        }
+    }
+    path
 }
 
 #[test]
 fn sw_launch_run_pcode_hello_against_real_tools() {
-    let Some((out, pa24r, p24load)) = skip_unless_ready() else {
-        eprintln!("scenario_b prerequisites missing; skipping");
+    let Some(out) = skip_unless_ready() else {
         return;
     };
-    let code_ptr = prebuild(&out, &pa24r, &p24load);
+    // Pre-build pvm.bin so the TOML can reference it as a binary
+    // layer without baking sibling pvm.s paths into the fixture.
+    // pa24r + p24-load run inside sw-launch (Phase 3 step 1).
+    let code_ptr = prebuild_pvm(&out);
     let toml = out.join("sw-launch.toml");
-    write_toml(
-        &toml,
-        &out.join("pvm.bin"),
-        &out.join("hello.p24m"),
-        code_ptr,
-    );
+    write_toml(&toml, &out.join("pvm.bin"), &hello_spc(), code_ptr);
     Command::cargo_bin("sw-launch")
         .expect("binary built")
+        .env("PATH", extended_path())
         .args(["run", "pcode-hello", "--config", toml.to_str().unwrap()])
         .assert()
         .success()
@@ -217,23 +225,18 @@ fn sw_launch_run_pcode_hello_against_real_tools() {
 
 #[test]
 fn run_with_misaligned_patch_fails_visibly() {
-    let Some((out, pa24r, p24load)) = skip_unless_ready() else {
-        eprintln!("scenario_b prerequisites missing; skipping");
+    let Some(out) = skip_unless_ready() else {
         return;
     };
-    let _ = prebuild(&out, &pa24r, &p24load);
+    let _ = prebuild_pvm(&out);
     let toml = out.join("sw-launch-bad.toml");
-    // Patch a deliberately wrong address (0x0FFF00) so code_ptr
-    // never gets the bytecode pointer it needs. Run still
-    // happens; UART output won't contain "Hello".
-    write_toml(
-        &toml,
-        &out.join("pvm.bin"),
-        &out.join("hello.p24m"),
-        0x0FFF00,
-    );
+    // Patch a deliberately wrong address so code_ptr never gets
+    // the bytecode pointer it needs. Run still happens; UART
+    // output won't contain "Hello".
+    write_toml(&toml, &out.join("pvm.bin"), &hello_spc(), 0x0FFF00);
     Command::cargo_bin("sw-launch")
         .expect("binary built")
+        .env("PATH", extended_path())
         .args(["run", "pcode-hello", "--config", toml.to_str().unwrap()])
         .assert()
         .failure()

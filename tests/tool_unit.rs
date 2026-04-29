@@ -258,6 +258,33 @@ fn from_source_sibling_missing_artifact_errors() {
 }
 
 #[test]
+fn pcode_linker_argv_includes_load_addr_in_extra_args() {
+    let Some(no_op) = no_op_tool() else {
+        eprintln!("/usr/bin/true not present; skipping");
+        return;
+    };
+    let tmp = tempdir_utf8();
+    let p24 = make_input(&tmp, "h.p24", &[0u8; 18]);
+    let mut tool = Tool::new(no_op);
+    tool.kind = ToolKind::PcodeLinker;
+    let mut job = BuildJob {
+        layer_name: "h".into(),
+        input: p24,
+        output_bin: tmp.join("h.p24m"),
+        output_lst: Utf8PathBuf::new(),
+        extra_args: vec!["--load-addr".into(), "0x010000".into()],
+    };
+    tool.build(&job).expect("first link");
+    tool.build(&job).expect("second link (memoized)");
+    assert_eq!(tool.spawn_count, 1, "same args -> memoized");
+
+    // Different load-addr -> distinct cache entry.
+    job.extra_args = vec!["--load-addr".into(), "0x020000".into()];
+    tool.build(&job).expect("third link with different addr");
+    assert_eq!(tool.spawn_count, 2, "distinct extra_args -> distinct key");
+}
+
+#[test]
 fn pa24r_integration_assembles_hello_spc() {
     // Gated on pa24r being on PATH. The vendored binary at
     // ~/github/sw-embed/sw-cor24-pcode/target/release/pa24r is the

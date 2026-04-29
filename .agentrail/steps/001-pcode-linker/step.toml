@@ -1,6 +1,6 @@
 number = 1
 slug = "pcode-linker"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 1: pcode-linker
 

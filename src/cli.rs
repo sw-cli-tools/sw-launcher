@@ -271,6 +271,7 @@ fn assemble_artifacts(
     let out_root = cfg_dir.join(".sw-launch").join("build").join(scenario_name);
     let mut by_layer: BTreeMap<String, ArtifactEntry> = BTreeMap::new();
     let mut pcode: Option<Tool> = None;
+    let mut pcode_linker: Option<Tool> = None;
     for layer_name in &scen.layers {
         let Some(layer) = cfg.layers.get(layer_name) else {
             continue;
@@ -315,18 +316,49 @@ fn assemble_artifacts(
                     )?);
                 }
                 let layer_dir = out_root.join(layer_name);
-                let job = BuildJob {
+                // Phase 1: pa24r .spc -> .p24
+                let p24 = layer_dir.join(format!("{layer_name}.p24"));
+                let assemble_job = BuildJob {
                     layer_name: layer_name.clone(),
                     input: resolved_input,
-                    output_bin: layer_dir.join(format!("{layer_name}.p24")),
+                    output_bin: p24.clone(),
                     output_lst: Utf8PathBuf::new(),
                     extra_args: Vec::new(),
                 };
-                let out = pcode.as_mut().unwrap().build(&job)?;
+                pcode.as_mut().unwrap().build(&assemble_job)?;
+                // Phase 2: p24-load .p24 --load-addr <addr> -> .p24m
+                let load_addr_hex = layer
+                    .load
+                    .as_ref()
+                    .and_then(|l| l.address.as_ref())
+                    .map(|h| h.0.clone())
+                    .ok_or_else(|| {
+                        Error::cli(format!(
+                            "pcode layer `{layer_name}` needs load.address for p24-load"
+                        ))
+                    })?;
+                if pcode_linker.is_none() {
+                    pcode_linker = Some(Tool::from_source(
+                        &SourceSpec::FromPath {
+                            binary: "p24-load".into(),
+                        },
+                        &cfg_dir,
+                        ToolKind::PcodeLinker,
+                    )?);
+                }
+                let p24m = layer_dir.join(format!("{layer_name}.p24m"));
+                let link_job = BuildJob {
+                    layer_name: layer_name.clone(),
+                    input: p24,
+                    output_bin: p24m.clone(),
+                    output_lst: Utf8PathBuf::new(),
+                    extra_args: vec!["--load-addr".into(), load_addr_hex],
+                };
+                pcode_linker.as_mut().unwrap().build(&link_job)?;
                 by_layer.insert(
                     layer_name.clone(),
                     ArtifactEntry {
-                        artifact: out.artifact,
+                        artifact: p24m,
                         listing: Listing::default(),
                     },
                 );
