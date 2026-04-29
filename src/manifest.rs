@@ -94,6 +94,8 @@ impl LoadPlan {
             entry: scen.entry.as_u32()?,
             ..LoadPlan::default()
         };
+        // Pass 1: memory loads, UART, segments. No patches yet --
+        // cross-layer patches need every layer's load.address known.
         for layer_name in &scen.layers {
             let Some(layer) = cfg.layers.get(layer_name) else {
                 continue;
@@ -101,6 +103,20 @@ impl LoadPlan {
             collect_layer(layer_name, layer, artifacts, scen, &mut plan)?;
         }
         plan.memory_loads.sort_by_key(|m| m.address);
+        // Pass 2: resolve patches now that the plan knows where
+        // every layer ended up. Literal-hex stays inline; cross-
+        // layer "<other>.<symbol>" looks up the producing layer's
+        // listing in `artifacts`.
+        for layer_name in &scen.layers {
+            let Some(layer) = cfg.layers.get(layer_name) else {
+                continue;
+            };
+            for p in &layer.patches {
+                if let Some(rp) = resolve_patch(p, layer_name, cfg, artifacts, &plan)? {
+                    plan.patches.push(rp);
+                }
+            }
+        }
         plan.patches.sort_by_key(|p| p.address);
         Ok(plan)
     }
@@ -160,11 +176,6 @@ fn collect_layer(
     for (idx, seg) in layer.segments.iter().enumerate() {
         if let Some(rs) = resolve_segment(layer_name, idx, seg, layer, artifacts) {
             plan.segments.push(rs);
-        }
-    }
-    for p in &layer.patches {
-        if let Some(rp) = resolve_patch(p, layer_name) {
-            plan.patches.push(rp);
         }
     }
     Ok(())
@@ -254,15 +265,79 @@ fn resolve_segment(
     })
 }
 
-fn resolve_patch(p: &crate::config::Patch, _layer_name: &str) -> Option<ResolvedPatch> {
-    if !p.target.starts_with("0x") {
-        return None; // symbolic targets resolve in step 009
-    }
-    let address = crate::config::parse_hex_u32(&p.target).ok()?;
-    let value = if p.value.starts_with("0x") {
-        crate::config::parse_hex_u32(&p.value).ok()?
-    } else {
-        return None;
+/// Resolve a single `Patch` against the in-progress plan and the
+/// built `Artifacts`. Targets and values can each be:
+///
+///   - literal hex (`"0x000A12"`)
+///   - cross-layer symbol (`"<layer>.<symbol>"`) -- resolved
+///     through the producing layer's `Listing` plus its load
+///     address; the value form `"<layer>.address"` returns the
+///     layer's load address verbatim.
+///
+/// Returns `Ok(None)` if the patch can't be resolved by *shape*
+/// (e.g. a future `self.address` form); `Err` if the shape is
+/// supported but resolution failed (missing listing, unknown
+/// symbol).
+fn resolve_patch(
+    p: &crate::config::Patch,
+    _layer_name: &str,
+    cfg: &Config,
+    artifacts: &Artifacts,
+    plan: &LoadPlan,
+) -> Result<Option<ResolvedPatch>> {
+    let address = match resolve_patch_term(&p.target, cfg, artifacts, plan)? {
+        Some(a) => a,
+        None => return Ok(None),
     };
-    Some(ResolvedPatch { address, value })
+    let value = match resolve_patch_term(&p.value, cfg, artifacts, plan)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    Ok(Some(ResolvedPatch { address, value }))
+}
+
+/// One of the two halves of a patch (target *or* value). Same
+/// resolution rules apply to both. The Phase 2 shapes are
+/// hex-literal and `<layer>.<symbol-or-address>`.
+fn resolve_patch_term(
+    term: &str,
+    cfg: &Config,
+    artifacts: &Artifacts,
+    plan: &LoadPlan,
+) -> Result<Option<u32>> {
+    if term.starts_with("0x") {
+        return Ok(Some(crate::config::parse_hex_u32(term)?));
+    }
+    if term == "self.address" || term == "self.end" || term == "self.size" {
+        return Ok(None); // resolved by segment-block context, step 010
+    }
+    let Some((layer_name, sym)) = term.split_once('.') else {
+        return Err(Error::cli(format!(
+            "E0006 patch term `{term}` is neither hex nor `<layer>.<symbol>`"
+        )));
+    };
+    let load = plan
+        .memory_loads
+        .iter()
+        .find(|m| m.layer == layer_name)
+        .ok_or_else(|| {
+            Error::cli(format!(
+                "E0006 patch term `{term}` references layer `{layer_name}` which has no memory load"
+            ))
+        })?;
+    if sym == "address" {
+        return Ok(Some(load.address));
+    }
+    let _ = cfg;
+    let entry = artifacts.by_layer.get(layer_name).ok_or_else(|| {
+        Error::cli(format!(
+            "E0006 patch term `{term}` references layer `{layer_name}` whose artifact is not built"
+        ))
+    })?;
+    let offset = entry.listing.resolve(sym).ok_or_else(|| {
+        Error::cli(format!(
+            "E0006 patch term `{term}` symbol `{sym}` not found in layer `{layer_name}`'s listing"
+        ))
+    })?;
+    Ok(Some(load.address.saturating_add(offset)))
 }

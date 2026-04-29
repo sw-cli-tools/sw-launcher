@@ -362,6 +362,132 @@ fn e0031_undeclared_memory_profile() {
 }
 
 #[test]
+fn e0006_unknown_referenced_layer_with_did_you_mean() {
+    let cfg = parse(
+        r#"
+        schema_version = 1
+        [project]
+        name = "x"
+        [targets.cor24]
+        kind = "emulator"
+        word_bits = 24
+        address_bits = 24
+        endian = "big"
+        loader = "cor24-memory-map"
+        regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+        [scenarios.demo]
+        target = "cor24"
+        layers = ["pcode_vm", "app"]
+        entry  = "0x000000"
+        [scenarios.demo.run]
+        max_cycles = 1
+        [layers.pcode_vm]
+        kind = "assembler"
+        exports = { symbols = ["code_ptr"] }
+        [layers.app]
+        kind = "binary"
+        patches = [
+          { target = "pcode_vmm.code_ptr", value = "0x010000" },
+        ]
+        "#,
+    );
+    let d = run(&cfg, "demo");
+    assert!(has_code(&d, 6), "expected E0006, got {:?}", d);
+    let msg = d.iter().find(|x| x.code == ErrorCode(6)).unwrap();
+    assert!(
+        msg.hint
+            .as_deref()
+            .map(|h| h.contains("pcode_vm"))
+            .unwrap_or(false),
+        "expected did-you-mean hint pointing at pcode_vm, got {:?}",
+        msg.hint
+    );
+}
+
+#[test]
+fn e0006_layer_has_no_exports_block() {
+    let cfg = parse(
+        r#"
+        schema_version = 1
+        [project]
+        name = "x"
+        [targets.cor24]
+        kind = "emulator"
+        word_bits = 24
+        address_bits = 24
+        endian = "big"
+        loader = "cor24-memory-map"
+        regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+        [scenarios.demo]
+        target = "cor24"
+        layers = ["a", "b"]
+        entry  = "0x000000"
+        [scenarios.demo.run]
+        max_cycles = 1
+        [layers.a]
+        kind = "assembler"
+        [layers.b]
+        kind = "binary"
+        patches = [
+          { target = "a.code_ptr", value = "0x010000" },
+        ]
+        "#,
+    );
+    let d = run(&cfg, "demo");
+    let msg = d.iter().find(|x| x.code == ErrorCode(6)).unwrap();
+    assert!(
+        msg.hint
+            .as_deref()
+            .map(|h| h.contains("exports"))
+            .unwrap_or(false),
+        "expected exports hint, got {:?}",
+        msg.hint
+    );
+}
+
+#[test]
+fn e0006_symbol_not_in_exports_with_did_you_mean() {
+    let cfg = parse(
+        r#"
+        schema_version = 1
+        [project]
+        name = "x"
+        [targets.cor24]
+        kind = "emulator"
+        word_bits = 24
+        address_bits = 24
+        endian = "big"
+        loader = "cor24-memory-map"
+        regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+        [scenarios.demo]
+        target = "cor24"
+        layers = ["vm", "app"]
+        entry  = "0x000000"
+        [scenarios.demo.run]
+        max_cycles = 1
+        [layers.vm]
+        kind = "assembler"
+        exports = { symbols = ["code_ptr", "heap_top"] }
+        [layers.app]
+        kind = "binary"
+        patches = [
+          { target = "vm.code_ptrr", value = "0x010000" },
+        ]
+        "#,
+    );
+    let d = run(&cfg, "demo");
+    let msg = d.iter().find(|x| x.code == ErrorCode(6)).unwrap();
+    assert!(
+        msg.hint
+            .as_deref()
+            .map(|h| h.contains("code_ptr"))
+            .unwrap_or(false),
+        "expected did-you-mean hint pointing at code_ptr, got {:?}",
+        msg.hint
+    );
+}
+
+#[test]
 fn scenario_a_fixture_validates_cleanly() {
     let mut p = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("tests/fixtures/scenario_a.toml");

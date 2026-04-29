@@ -237,6 +237,132 @@ fn memory_loads_sort_address_ascending_regardless_of_toml_order() {
 }
 
 #[test]
+fn cross_layer_symbol_resolves_through_listing() {
+    // Layer "vm" loads at 0x000000 and exports `code_ptr` at
+    // offset 0x0010. Layer "app" patches "vm.code_ptr" with a
+    // literal hex value. Phase 2 step 2 resolves the target to
+    // 0x0010 (vm.address + offset).
+    let toml = r#"
+schema_version = 1
+[project]
+name = "sym-resolve"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+[scenarios.demo]
+target = "cor24"
+layers = ["vm", "app"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.vm]
+kind = "assembler"
+input = "vm.s"
+exports = { symbols = ["code_ptr"] }
+[layers.vm.load]
+method = "memory"
+address = "0x000000"
+[layers.app]
+kind = "binary"
+input = "app.bin"
+patches = [
+  { target = "vm.code_ptr", value = "0x010000" },
+]
+[layers.app.load]
+method = "memory"
+address = "0x010000"
+"#;
+    let cfg = parse(toml);
+    let mut by_layer = BTreeMap::new();
+    let lst = "                    _start:\n\
+               0000: 00 00 00       .word 0\n\
+                                    code_ptr:\n\
+               0010: 00 00 00       .word 0\n";
+    by_layer.insert(
+        "vm".to_string(),
+        ArtifactEntry {
+            artifact: Utf8PathBuf::from("vm.bin"),
+            listing: Listing::parse(lst),
+        },
+    );
+    by_layer.insert(
+        "app".to_string(),
+        ArtifactEntry {
+            artifact: Utf8PathBuf::from("app.bin"),
+            listing: Listing::default(),
+        },
+    );
+    let arts = Artifacts { by_layer };
+    let plan = LoadPlan::build(&cfg, "demo", &arts).unwrap();
+    assert_eq!(plan.patches.len(), 1);
+    assert_eq!(plan.patches[0].address, 0x0010);
+    assert_eq!(plan.patches[0].value, 0x010000);
+}
+
+#[test]
+fn cross_layer_value_address_resolves_to_layer_load_addr() {
+    let toml = r#"
+schema_version = 1
+[project]
+name = "addr-form"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+[scenarios.demo]
+target = "cor24"
+layers = ["vm", "app"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.vm]
+kind = "assembler"
+input = "vm.s"
+exports = { symbols = ["code_ptr"] }
+[layers.vm.load]
+method = "memory"
+address = "0x000000"
+[layers.app]
+kind = "binary"
+input = "app.bin"
+patches = [
+  { target = "vm.code_ptr", value = "app.address" },
+]
+[layers.app.load]
+method = "memory"
+address = "0x010000"
+"#;
+    let cfg = parse(toml);
+    let mut by_layer = BTreeMap::new();
+    let lst = "                    code_ptr:\n0010: 00 00 00       .word 0\n";
+    by_layer.insert(
+        "vm".to_string(),
+        ArtifactEntry {
+            artifact: Utf8PathBuf::from("vm.bin"),
+            listing: Listing::parse(lst),
+        },
+    );
+    by_layer.insert(
+        "app".to_string(),
+        ArtifactEntry {
+            artifact: Utf8PathBuf::from("app.bin"),
+            listing: Listing::default(),
+        },
+    );
+    let arts = Artifacts { by_layer };
+    let plan = LoadPlan::build(&cfg, "demo", &arts).unwrap();
+    assert_eq!(plan.patches[0].address, 0x0010);
+    assert_eq!(plan.patches[0].value, 0x010000);
+}
+
+#[test]
 fn literal_hex_patches_resolve_in_address_order() {
     let toml = r#"
         schema_version = 1

@@ -169,7 +169,8 @@ mod rules {
     }
 
     /// Per-layer rules: E0002 ref, E0004 uart, E0005 kind/load,
-    /// E0006 patch shape, E0015 partial, E0016 self.* outside
+    /// E0006 patch shape (literal hex AND cross-layer
+    /// `<layer>.<symbol>`), E0015 partial, E0016 self.* outside
     /// segment.
     pub(super) fn check_layers(cfg: &Config, scen: &Scenario, out: &mut Vec<Diagnostic>) {
         for name in &scen.layers {
@@ -183,7 +184,7 @@ mod rules {
             check_kind_load(name, layer, out);
             check_uart_size(name, layer, out);
             for p in &layer.patches {
-                check_patch(name, p, out);
+                check_patch(name, p, cfg, out);
             }
         }
     }
@@ -249,7 +250,7 @@ mod rules {
         }
     }
 
-    fn check_patch(name: &str, p: &Patch, out: &mut Vec<Diagnostic>) {
+    fn check_patch(name: &str, p: &Patch, cfg: &Config, out: &mut Vec<Diagnostic>) {
         if p.target.starts_with("0x") && crate::config::parse_hex_u32(&p.target).is_err() {
             out.push(
                 Diagnostic::error(
@@ -278,6 +279,107 @@ mod rules {
                 .with_layer(name),
             );
         }
+        check_patch_term(&p.target, name, cfg, out);
+        check_patch_term(&p.value, name, cfg, out);
+    }
+
+    /// E0006 cross-layer shape check for a patch term (target or
+    /// value). Verifies that `<other>.<symbol>` references a
+    /// declared layer with an exports block listing the symbol;
+    /// surfaces a Levenshtein "did you mean ...?" hint when not.
+    /// `<other>.address` is special-cased and only requires the
+    /// layer to exist.
+    fn check_patch_term(term: &str, layer_name: &str, cfg: &Config, out: &mut Vec<Diagnostic>) {
+        if term.starts_with("0x")
+            || term == "self.address"
+            || term == "self.end"
+            || term == "self.size"
+        {
+            return;
+        }
+        let Some((other, sym)) = term.split_once('.') else {
+            return;
+        };
+        let Some(other_layer) = cfg.layers.get(other) else {
+            let names: Vec<String> = cfg.layers.keys().cloned().collect();
+            let hint = closest_match(other, &names)
+                .map(|s| format!("did you mean `{s}.{sym}`?"))
+                .unwrap_or_else(|| format!("declared layers: {names:?}"));
+            out.push(
+                Diagnostic::error(
+                    ErrorCode(6),
+                    format!("patch term `{term}` references undeclared layer `{other}`"),
+                )
+                .with_layer(layer_name)
+                .with_hint(hint),
+            );
+            return;
+        };
+        if sym == "address" {
+            return;
+        }
+        let Some(exports) = &other_layer.exports else {
+            out.push(
+                Diagnostic::error(
+                    ErrorCode(6),
+                    format!(
+                        "patch term `{term}` requires layer `{other}` to declare \
+                         `exports.symbols = [\"{sym}\", ...]`"
+                    ),
+                )
+                .with_layer(layer_name)
+                .with_hint(format!(
+                    "add [layers.{other}.exports] symbols = [\"{sym}\"]"
+                )),
+            );
+            return;
+        };
+        if !exports.symbols.iter().any(|s| s == sym) {
+            let hint = closest_match(sym, &exports.symbols)
+                .map(|s| format!("did you mean `{other}.{s}`?"))
+                .unwrap_or_else(|| format!("declared symbols: {:?}", exports.symbols));
+            out.push(
+                Diagnostic::error(
+                    ErrorCode(6),
+                    format!(
+                        "patch term `{term}` symbol `{sym}` not in `{other}`'s exports.symbols"
+                    ),
+                )
+                .with_layer(layer_name)
+                .with_hint(hint),
+            );
+        }
+    }
+
+    /// Wagner-Fischer Levenshtein distance, returning the closest
+    /// candidate within edit distance 3. Returns `None` if no
+    /// candidate is close enough -- avoids "did you mean ANY"
+    /// suggestions over wildly different strings.
+    fn closest_match<'a>(needle: &str, haystack: &'a [String]) -> Option<&'a str> {
+        let best = haystack
+            .iter()
+            .map(|h| (h.as_str(), edit_distance(needle, h)))
+            .min_by_key(|(_, d)| *d);
+        match best {
+            Some((s, d)) if d <= 3 => Some(s),
+            _ => None,
+        }
+    }
+
+    fn edit_distance(a: &str, b: &str) -> usize {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut dp: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.iter().enumerate() {
+            let mut prev = dp[0];
+            dp[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let cur = dp[j + 1];
+                let sub = if ca == cb { prev } else { prev + 1 };
+                dp[j + 1] = sub.min(dp[j + 1] + 1).min(dp[j] + 1);
+                prev = cur;
+            }
+        }
+        dp[b.len()]
     }
 
     /// E0011 (segment region check), E0013 (size>0), E0014
