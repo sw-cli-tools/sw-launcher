@@ -488,6 +488,59 @@ fn e0006_symbol_not_in_exports_with_did_you_mean() {
 }
 
 #[test]
+fn e0003_reserved_heap_overlaps_loaded_binary() {
+    let cfg = parse(
+        r#"
+        schema_version = 1
+        [project]
+        name = "x"
+        [targets.cor24]
+        kind = "emulator"
+        word_bits = 24
+        address_bits = 24
+        endian = "big"
+        loader = "cor24-memory-map"
+        regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+        [scenarios.demo]
+        target = "cor24"
+        layers = ["a", "b"]
+        entry  = "0x000000"
+        [scenarios.demo.run]
+        max_cycles = 1
+        [layers.a]
+        kind = "binary"
+        input = "a.bin"
+        size = "0x008000"
+        [layers.a.load]
+        method = "memory"
+        address = "0x080000"
+        [layers.b]
+        kind = "binary"
+        input = "b.bin"
+        [layers.b.load]
+        method = "memory"
+        address = "0x000000"
+        [[layers.b.segments]]
+        name = "value_heap"
+        kind = "heap"
+        embedded = false
+        size = "0x010000"
+        [layers.b.segments.load]
+        method = "memory"
+        address = "0x086000"
+        "#,
+    );
+    let d = run(&cfg, "demo");
+    assert!(has_code(&d, 3), "expected E0003, got {:?}", d);
+    let msg = d.iter().find(|x| x.code == ErrorCode(3)).unwrap();
+    assert!(
+        msg.message.contains("a") && msg.message.contains("b"),
+        "expected both layer names in overlap message, got: {}",
+        msg.message
+    );
+}
+
+#[test]
 fn scenario_a_fixture_validates_cleanly() {
     let mut p = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("tests/fixtures/scenario_a.toml");

@@ -1,6 +1,6 @@
 number = 3
 slug = "reserved-heap-segments"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 3: reserved-heap-segments
 

@@ -330,6 +330,55 @@ fn sidecar_with_non_hex_contents_errors() {
 }
 
 #[test]
+fn reserved_heap_segment_appears_in_segments_not_loads() {
+    let toml = r#"
+schema_version = 1
+[project]
+name = "reserved-heap"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = { sram = { start = "0x000000", end = "0x0FFFFF" }, ebr_stack = { start = "0xFEEC00", end = "0xFEF7FF" }, mmio = { start = "0xFF0000", end = "0xFFFFFF" } }
+[scenarios.demo]
+target = "cor24"
+layers = ["app"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.app]
+kind = "binary"
+input = "app.bin"
+[layers.app.load]
+method = "memory"
+address = "0x000000"
+[[layers.app.segments]]
+name = "value_heap"
+kind = "heap"
+embedded = false
+size = "0x010000"
+[layers.app.segments.load]
+method = "memory"
+address = "0x080000"
+"#;
+    let cfg = parse(toml);
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), Utf8Path::new(".")).unwrap();
+    // memory_loads has only the binary layer; the reserved heap
+    // segment does NOT contribute a --load-binary entry.
+    assert_eq!(plan.memory_loads.len(), 1);
+    assert_eq!(plan.memory_loads[0].layer, "app");
+    assert_eq!(plan.memory_loads[0].address, 0x000000);
+    // segments has the heap reservation, with the right range.
+    assert_eq!(plan.segments.len(), 1);
+    assert_eq!(plan.segments[0].name.as_deref(), Some("value_heap"));
+    assert_eq!(plan.segments[0].start, 0x080000);
+    assert_eq!(plan.segments[0].end, 0x080000 + 0x010000);
+    assert!(!plan.segments[0].embedded);
+}
+
+#[test]
 fn cross_layer_symbol_resolves_through_listing() {
     // Layer "vm" loads at 0x000000 and exports `code_ptr` at
     // offset 0x0010. Layer "app" patches "vm.code_ptr" with a

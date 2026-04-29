@@ -115,6 +115,7 @@ pub fn validate(cfg: &Config, scenario_name: &str) -> Result<Vec<Diagnostic>, Ve
     rules::check_layers(cfg, scen, &mut out);
     rules::check_profile(cfg, scenario_name, scen, &mut out);
     rules::check_segments(cfg, scen, &mut out);
+    rules::check_overlap(cfg, scen, &mut out);
     rules::check_heap_rules(cfg, scen, &mut out);
     rules::check_total_budget(cfg, scen, &mut out);
 
@@ -515,6 +516,77 @@ mod rules {
         let lo = range.start.as_u32().unwrap_or(0);
         let hi = range.end.as_u32().unwrap_or(0);
         !(end <= lo || addr > hi)
+    }
+
+    /// E0003 cross-layer overlap. Collects ranges that have
+    /// declarable sizes (binary-kind layers with explicit
+    /// `size`, plus any non-embedded segment with
+    /// `load.address` + `size`) and reports any pair whose
+    /// ranges intersect. Embedded segments and assembler/
+    /// pcode kinds without explicit `size` are skipped --
+    /// their byte ranges depend on artifact size which the
+    /// validator doesn't read.
+    pub(super) fn check_overlap(cfg: &Config, scen: &Scenario, out: &mut Vec<Diagnostic>) {
+        let mut ranges: Vec<(String, String, u32, u32)> = Vec::new();
+        for layer_name in &scen.layers {
+            let Some(layer) = cfg.layers.get(layer_name) else {
+                continue;
+            };
+            // Layer-level binary range (when layer.size declared).
+            if let (Some(load), Some(SizeOrAuto::Hex(sz))) = (&layer.load, &layer.size)
+                && load.method == LoadMethod::Memory
+                && let Some(addr_hex) = &load.address
+                && let (Ok(addr), Ok(size)) = (addr_hex.as_u32(), sz.as_u32())
+                && size > 0
+            {
+                ranges.push((
+                    layer_name.clone(),
+                    "<image>".into(),
+                    addr,
+                    addr.saturating_add(size),
+                ));
+            }
+            // Non-embedded segment ranges.
+            for seg in &layer.segments {
+                if seg.embedded == Some(true) {
+                    continue;
+                }
+                let Some(load) = &seg.load else { continue };
+                let Some(addr_hex) = &load.address else {
+                    continue;
+                };
+                let Some(SizeOrAuto::Hex(size_hex)) = &seg.size else {
+                    continue;
+                };
+                let (Ok(addr), Ok(size)) = (addr_hex.as_u32(), size_hex.as_u32()) else {
+                    continue;
+                };
+                if size == 0 {
+                    continue;
+                }
+                ranges.push((
+                    layer_name.clone(),
+                    seg.name.clone().unwrap_or_else(|| "<segment>".into()),
+                    addr,
+                    addr.saturating_add(size),
+                ));
+            }
+        }
+        for i in 0..ranges.len() {
+            for j in (i + 1)..ranges.len() {
+                let (la, na, sa, ea) = (&ranges[i].0, &ranges[i].1, ranges[i].2, ranges[i].3);
+                let (lb, nb, sb, eb) = (&ranges[j].0, &ranges[j].1, ranges[j].2, ranges[j].3);
+                if !(eb <= sa || ea <= sb) {
+                    out.push(Diagnostic::error(
+                        ErrorCode(3),
+                        format!(
+                            "layer `{la}` ({na}, [0x{sa:06X}..0x{ea:06X})) overlaps \
+                             layer `{lb}` ({nb}, [0x{sb:06X}..0x{eb:06X}))"
+                        ),
+                    ));
+                }
+            }
+        }
     }
 
     /// E0031 (undeclared profile), E0032 (region-not-in-profile),
