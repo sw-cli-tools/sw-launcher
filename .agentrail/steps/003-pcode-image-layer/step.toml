@@ -1,0 +1,12 @@
+number = 3
+slug = "pcode-image-layer"
+status = "pending"
+description = """
+# Step 3: pcode-image-layer
+
+Wire `Layer.kind = "pcode"` and `Layer.kind = "p..."""
+role = "production"
+context_files = []
+created_at = "2026-04-28T19:13:26"
+task_type = "rust"
+commits = []

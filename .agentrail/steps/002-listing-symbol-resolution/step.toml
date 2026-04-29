@@ -1,0 +1,12 @@
+number = 2
+slug = "listing-symbol-resolution"
+status = "pending"
+description = """
+# Step 2: listing-symbol-resolution
+
+Promote E0006 from "shape only" (Phase 1..."""
+role = "production"
+context_files = []
+created_at = "2026-04-28T19:13:26"
+task_type = "rust"
+commits = []
