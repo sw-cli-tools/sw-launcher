@@ -1,6 +1,6 @@
 number = 1
 slug = "pcode-linker"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 1: pcode-linker
 
@@ -8,5 +8,6 @@ Add `ToolKind::PcodeLinker` so `sw-launch` invokes `p..."""
 role = "production"
 context_files = []
 created_at = "2026-04-29T10:44:35"
+completed_at = "2026-04-29T11:23:53"
 task_type = "rust"
-commits = []
+commits = ["943f9b3525869f1b59d454fcca8d5979133fd728"]

@@ -1,0 +1,11 @@
+{
+  "task_type": "rust",
+  "state": {
+    "number": 1,
+    "step": "pcode-linker"
+  },
+  "action": "TDD red->green; extended PATH in scenario_b tests so sw-launch's FromPath lookup finds sibling pa24r/p24-load; expected sw-checklist creep from chained tools landed as documented",
+  "result": "success",
+  "reward": 1,
+  "timestamp": "2026-04-29T11:23:53"
+}
