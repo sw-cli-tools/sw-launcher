@@ -1,0 +1,12 @@
+number = 1
+slug = "pcode-linker"
+status = "pending"
+description = """
+# Step 1: pcode-linker
+
+Add `ToolKind::PcodeLinker` so `sw-launch` invokes `p..."""
+role = "production"
+context_files = []
+created_at = "2026-04-29T10:44:35"
+task_type = "rust"
+commits = []

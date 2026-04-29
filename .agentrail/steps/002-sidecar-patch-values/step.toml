@@ -1,0 +1,12 @@
+number = 2
+slug = "sidecar-patch-values"
+status = "pending"
+description = """
+# Step 2: sidecar-patch-values
+
+Add `value = "sidecar:<path>"` patch form. Us..."""
+role = "production"
+context_files = []
+created_at = "2026-04-29T10:44:35"
+task_type = "rust"
+commits = []

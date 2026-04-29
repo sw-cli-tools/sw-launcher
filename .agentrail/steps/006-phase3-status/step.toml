@@ -1,0 +1,12 @@
+number = 6
+slug = "phase3-status"
+status = "pending"
+description = """
+# Step 6: phase3-status
+
+Close the Phase 3 saga. Update docs/status.md, draft..."""
+role = "production"
+context_files = []
+created_at = "2026-04-29T10:44:35"
+task_type = "docs"
+commits = []
