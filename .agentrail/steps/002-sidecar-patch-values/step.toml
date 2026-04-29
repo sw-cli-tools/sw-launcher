@@ -1,6 +1,6 @@
 number = 2
 slug = "sidecar-patch-values"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 2: sidecar-patch-values
 

@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::config::{Config, LoadMethod, Scenario, SegmentKind, SizeOrAuto};
 use crate::error::{Error, Result};
@@ -85,7 +85,12 @@ impl LoadPlan {
     /// problems that validation should have caught earlier
     /// (missing scenario, missing artifact for a memory layer,
     /// unparseable hex).
-    pub fn build(cfg: &Config, scenario_name: &str, artifacts: &Artifacts) -> Result<LoadPlan> {
+    pub fn build(
+        cfg: &Config,
+        scenario_name: &str,
+        artifacts: &Artifacts,
+        config_dir: &Utf8Path,
+    ) -> Result<LoadPlan> {
         let scen = cfg
             .scenarios
             .get(scenario_name)
@@ -104,15 +109,17 @@ impl LoadPlan {
         }
         plan.memory_loads.sort_by_key(|m| m.address);
         // Pass 2: resolve patches now that the plan knows where
-        // every layer ended up. Literal-hex stays inline; cross-
+        // every layer ended up. Literal hex stays inline; cross-
         // layer "<other>.<symbol>" looks up the producing layer's
-        // listing in `artifacts`.
+        // listing in `artifacts`; "sidecar:<path>" reads a hex
+        // value from a build-time text file (relative to
+        // `config_dir`).
         for layer_name in &scen.layers {
             let Some(layer) = cfg.layers.get(layer_name) else {
                 continue;
             };
             for p in &layer.patches {
-                if let Some(rp) = resolve_patch(p, layer_name, cfg, artifacts, &plan)? {
+                if let Some(rp) = resolve_patch(p, layer_name, cfg, artifacts, &plan, config_dir)? {
                     plan.patches.push(rp);
                 }
             }
@@ -284,32 +291,55 @@ fn resolve_patch(
     cfg: &Config,
     artifacts: &Artifacts,
     plan: &LoadPlan,
+    config_dir: &Utf8Path,
 ) -> Result<Option<ResolvedPatch>> {
-    let address = match resolve_patch_term(&p.target, cfg, artifacts, plan)? {
+    let address = match resolve_patch_term(&p.target, cfg, artifacts, plan, config_dir)? {
         Some(a) => a,
         None => return Ok(None),
     };
-    let value = match resolve_patch_term(&p.value, cfg, artifacts, plan)? {
+    let value = match resolve_patch_term(&p.value, cfg, artifacts, plan, config_dir)? {
         Some(v) => v,
         None => return Ok(None),
     };
     Ok(Some(ResolvedPatch { address, value }))
 }
 
-/// One of the two halves of a patch (target *or* value). Same
-/// resolution rules apply to both. The Phase 2 shapes are
-/// hex-literal and `<layer>.<symbol-or-address>`.
+/// One of the two halves of a patch (target *or* value). Phase 3
+/// shapes: hex-literal, `<layer>.<symbol-or-address>`, and
+/// `sidecar:<path>` (path resolved relative to `config_dir` if
+/// not absolute; file contents are a single hex value, with or
+/// without `0x` prefix, whitespace tolerated).
 fn resolve_patch_term(
     term: &str,
     cfg: &Config,
     artifacts: &Artifacts,
     plan: &LoadPlan,
+    config_dir: &Utf8Path,
 ) -> Result<Option<u32>> {
     if term.starts_with("0x") {
         return Ok(Some(crate::config::parse_hex_u32(term)?));
     }
     if term == "self.address" || term == "self.end" || term == "self.size" {
         return Ok(None); // resolved by segment-block context, step 010
+    }
+    if let Some(rel) = term.strip_prefix("sidecar:") {
+        let path = if Utf8Path::new(rel).is_absolute() {
+            Utf8PathBuf::from(rel)
+        } else {
+            config_dir.join(rel)
+        };
+        let raw = std::fs::read_to_string(path.as_std_path()).map_err(|_| {
+            Error::cli(format!(
+                "E0019 sidecar `{path}` could not be read (referenced by patch term `{term}`)"
+            ))
+        })?;
+        let cleaned = raw.trim();
+        let stripped = cleaned.strip_prefix("0x").unwrap_or(cleaned);
+        return u32::from_str_radix(stripped, 16).map(Some).map_err(|e| {
+            Error::cli(format!(
+                "E0019 sidecar `{path}` does not contain a hex literal (got {cleaned:?}): {e}"
+            ))
+        });
     }
     let Some((layer_name, sym)) = term.split_once('.') else {
         return Err(Error::cli(format!(

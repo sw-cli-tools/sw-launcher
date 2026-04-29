@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use sw_launcher::config::Config;
 use sw_launcher::manifest::{ArtifactEntry, Artifacts, LoadPlan};
 use sw_launcher::tool::Listing;
@@ -75,7 +75,7 @@ fn scenario_a_load_plan_has_expected_shape() {
     let dir = fixtures_dir();
     let cfg = parse(&scenario_a_toml(&dir));
     let arts = artifacts_for_echo(&dir);
-    let plan = LoadPlan::build(&cfg, "echo", &arts).expect("plan builds");
+    let plan = LoadPlan::build(&cfg, "echo", &arts, Utf8Path::new(".")).expect("plan builds");
 
     assert_eq!(plan.entry, 0x000000);
     assert_eq!(plan.memory_loads.len(), 1);
@@ -93,7 +93,7 @@ fn scenario_a_argv_matches_golden() {
     let dir = fixtures_dir();
     let cfg = parse(&scenario_a_toml(&dir));
     let arts = artifacts_for_echo(&dir);
-    let plan = LoadPlan::build(&cfg, "echo", &arts).unwrap();
+    let plan = LoadPlan::build(&cfg, "echo", &arts, Utf8Path::new(".")).unwrap();
     let argv = plan.cor24_argv();
     let bin = dir.join("echo.bin");
     let expected: Vec<String> = vec![
@@ -178,7 +178,7 @@ fn embedded_segments_contribute_to_segments_but_not_loads() {
     );
     let arts = Artifacts { by_layer };
     let cfg = parse(SCENARIO_A_WITH_EMBEDDED_TOML);
-    let plan = LoadPlan::build(&cfg, "echo", &arts).unwrap();
+    let plan = LoadPlan::build(&cfg, "echo", &arts, Utf8Path::new(".")).unwrap();
 
     // Memory loads: only the layer's bin (one); embedded segments
     // do NOT add --load-binary entries.
@@ -231,9 +231,102 @@ fn memory_loads_sort_address_ascending_regardless_of_toml_order() {
         address = "0x000000"
     "#;
     let cfg = parse(toml);
-    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default()).unwrap();
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), Utf8Path::new(".")).unwrap();
     let addrs: Vec<u32> = plan.memory_loads.iter().map(|m| m.address).collect();
     assert_eq!(addrs, vec![0x000000, 0x010000]);
+}
+
+fn sidecar_toml(value_term: &str) -> String {
+    format!(
+        r#"
+schema_version = 1
+[project]
+name = "sidecar-test"
+[targets.cor24]
+kind = "emulator"
+word_bits = 24
+address_bits = 24
+endian = "big"
+loader = "cor24-memory-map"
+regions = {{ sram = {{ start = "0x000000", end = "0x0FFFFF" }}, ebr_stack = {{ start = "0xFEEC00", end = "0xFEF7FF" }}, mmio = {{ start = "0xFF0000", end = "0xFFFFFF" }} }}
+[scenarios.demo]
+target = "cor24"
+layers = ["a"]
+entry  = "0x000000"
+[scenarios.demo.run]
+max_cycles = 1
+[layers.a]
+kind = "binary"
+input = "a.bin"
+patches = [
+  {{ target = "0x000A12", value = "{value_term}" }},
+]
+[layers.a.load]
+method = "memory"
+address = "0x000000"
+"#
+    )
+}
+
+fn write_sidecar(dir: &Utf8Path, name: &str, contents: &str) -> Utf8PathBuf {
+    let p = dir.join(name);
+    std::fs::write(p.as_std_path(), contents).unwrap();
+    p
+}
+
+fn tempdir_utf8() -> Utf8PathBuf {
+    let base = std::env::temp_dir();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = base.join(format!(
+        "sw-launcher-sidecar-{}-{nanos:x}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    Utf8PathBuf::from_path_buf(dir).unwrap()
+}
+
+#[test]
+fn sidecar_resolves_to_literal_hex_value() {
+    let dir = tempdir_utf8();
+    write_sidecar(&dir, "addr.txt", "0x001279\n");
+    let cfg = parse(&sidecar_toml("sidecar:addr.txt"));
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap();
+    assert_eq!(plan.patches.len(), 1);
+    assert_eq!(plan.patches[0].address, 0x000A12);
+    assert_eq!(plan.patches[0].value, 0x001279);
+
+    // Also accept bare hex (no 0x prefix), trimmed whitespace.
+    write_sidecar(&dir, "addr.txt", "  1279  \n");
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap();
+    assert_eq!(plan.patches[0].value, 0x001279);
+}
+
+#[test]
+fn missing_sidecar_produces_clear_error() {
+    let dir = tempdir_utf8();
+    let cfg = parse(&sidecar_toml("sidecar:nonexistent.txt"));
+    let err = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("E0019"), "got: {msg}");
+    assert!(msg.contains("nonexistent.txt"), "got: {msg}");
+}
+
+#[test]
+fn sidecar_with_non_hex_contents_errors() {
+    let dir = tempdir_utf8();
+    write_sidecar(&dir, "garbage.txt", "not a number\n");
+    let cfg = parse(&sidecar_toml("sidecar:garbage.txt"));
+    let err = LoadPlan::build(&cfg, "demo", &Artifacts::default(), &dir).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("E0019"), "got: {msg}");
+    assert!(
+        msg.contains("hex literal") || msg.contains("not a number"),
+        "got: {msg}"
+    );
+    assert!(msg.contains("garbage.txt"), "got: {msg}");
 }
 
 #[test]
@@ -297,7 +390,7 @@ address = "0x010000"
         },
     );
     let arts = Artifacts { by_layer };
-    let plan = LoadPlan::build(&cfg, "demo", &arts).unwrap();
+    let plan = LoadPlan::build(&cfg, "demo", &arts, Utf8Path::new(".")).unwrap();
     assert_eq!(plan.patches.len(), 1);
     assert_eq!(plan.patches[0].address, 0x0010);
     assert_eq!(plan.patches[0].value, 0x010000);
@@ -357,7 +450,7 @@ address = "0x010000"
         },
     );
     let arts = Artifacts { by_layer };
-    let plan = LoadPlan::build(&cfg, "demo", &arts).unwrap();
+    let plan = LoadPlan::build(&cfg, "demo", &arts, Utf8Path::new(".")).unwrap();
     assert_eq!(plan.patches[0].address, 0x0010);
     assert_eq!(plan.patches[0].value, 0x010000);
 }
@@ -393,7 +486,7 @@ fn literal_hex_patches_resolve_in_address_order() {
         address = "0x000000"
     "#;
     let cfg = parse(toml);
-    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default()).unwrap();
+    let plan = LoadPlan::build(&cfg, "demo", &Artifacts::default(), Utf8Path::new(".")).unwrap();
     assert_eq!(plan.patches.len(), 2);
     assert_eq!(plan.patches[0].address, 0x000A11);
     assert_eq!(plan.patches[1].address, 0x000B22);

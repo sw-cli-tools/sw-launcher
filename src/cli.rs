@@ -235,7 +235,8 @@ fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         ToolKind::Assembler,
     )?;
     let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
-    let plan = LoadPlan::build(&cfg, scenario, &artifacts)?;
+    let cfg_dir = config_path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let plan = LoadPlan::build(&cfg, scenario, &artifacts, cfg_dir)?;
     let (uart, exit_code) = run_emulator(&asm.tool_path, &plan, &scen)?;
     if let Some(expect) = &scen.expect {
         check_expectations(expect, &uart, exit_code)?;
