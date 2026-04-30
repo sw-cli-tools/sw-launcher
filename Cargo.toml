@@ -1,3 +1,17 @@
+[workspace]
+members = ["crates/sw-launcher-tool"]
+resolver = "3"
+
+[workspace.dependencies]
+anyhow = "1"
+camino = { version = "1", features = ["serde1"] }
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+
 [package]
 name = "sw-launcher"
 version = "0.1.0"
@@ -15,15 +29,17 @@ name = "sw-launch"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-thiserror = "2"
-anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-camino = { version = "1", features = ["serde1"] }
-sha2 = "0.10"
-regex = "1"
+anyhow = { workspace = true }
+camino = { workspace = true }
+clap = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+sw-launcher-tool = { path = "crates/sw-launcher-tool" }
+thiserror = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+tempfile = "3"

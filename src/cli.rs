@@ -10,6 +10,7 @@ use std::process::Command;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 
+use crate::cache::Cache;
 use crate::config::{Config, Expect, Scenario};
 use crate::error::{Error, Result};
 use crate::manifest::{ArtifactEntry, Artifacts, LoadPlan};
@@ -233,7 +234,8 @@ fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         },
         config_path.parent().unwrap_or_else(|| Utf8Path::new(".")),
         ToolKind::Assembler,
-    )?;
+    )?
+    .with_cache(Cache::open_default()?);
     let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
     let cfg_dir = config_path.parent().unwrap_or_else(|| Utf8Path::new("."));
     let plan = LoadPlan::build(&cfg, scenario, &artifacts, cfg_dir)?;
@@ -308,13 +310,16 @@ fn assemble_artifacts(
             }
             "pcode" => {
                 if pcode.is_none() {
-                    pcode = Some(Tool::from_source(
-                        &SourceSpec::FromPath {
-                            binary: "pa24r".into(),
-                        },
-                        &cfg_dir,
-                        ToolKind::Pcode,
-                    )?);
+                    pcode = Some(
+                        Tool::from_source(
+                            &SourceSpec::FromPath {
+                                binary: "pa24r".into(),
+                            },
+                            &cfg_dir,
+                            ToolKind::Pcode,
+                        )?
+                        .with_cache(Cache::open_default()?),
+                    );
                 }
                 let layer_dir = out_root.join(layer_name);
                 // Phase 1: pa24r .spc -> .p24
@@ -339,13 +344,16 @@ fn assemble_artifacts(
                         ))
                     })?;
                 if pcode_linker.is_none() {
-                    pcode_linker = Some(Tool::from_source(
-                        &SourceSpec::FromPath {
-                            binary: "p24-load".into(),
-                        },
-                        &cfg_dir,
-                        ToolKind::PcodeLinker,
-                    )?);
+                    pcode_linker = Some(
+                        Tool::from_source(
+                            &SourceSpec::FromPath {
+                                binary: "p24-load".into(),
+                            },
+                            &cfg_dir,
+                            ToolKind::PcodeLinker,
+                        )?
+                        .with_cache(Cache::open_default()?),
+                    );
                 }
                 let p24m = layer_dir.join(format!("{layer_name}.p24m"));
                 let link_job = BuildJob {
@@ -488,7 +496,8 @@ fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
         },
         config_path.parent().unwrap_or_else(|| Utf8Path::new(".")),
         ToolKind::Assembler,
-    )?;
+    )?
+    .with_cache(Cache::open_default()?);
     let artifacts = assemble_artifacts(&cfg, &scen, scenario, config_path, &mut asm)?;
     for (layer_name, entry) in &artifacts.by_layer {
         println!("built {layer_name} -> {}", entry.artifact);

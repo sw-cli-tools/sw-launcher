@@ -1,0 +1,11 @@
+number = 1
+slug = "disk-cache-layout"
+status = "in-progress"
+description = """
+# Step 1: disk-cache-layout
+
+Replace the in-process `HashMap` cache in `src/t..."""
+role = "production"
+context_files = []
+created_at = "2026-04-29T16:07:54"
+commits = []

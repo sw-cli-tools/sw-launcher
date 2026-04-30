@@ -86,5 +86,14 @@ impl Error {
 /// Result alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
+impl From<anyhow::Error> for Error {
+    fn from(e: anyhow::Error) -> Self {
+        Error::Cli {
+            code: ErrorCode::CLI,
+            message: format!("{e:#}"),
+        }
+    }
+}
+
 // Tests moved to `tests/error_unit.rs` to keep module count under
 // the sw-checklist crate-module budget.
