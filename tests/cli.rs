@@ -127,22 +127,26 @@ fn cache_clean_on_empty_cache_reports_nothing() {
         .stdout(contains("nothing to remove"));
 }
 
+// Vendor sync/status wired up in Phase 4 step 3; smoke-tested in
+// tests/vendor_cli.rs against tempdir manifests. The default-path
+// invocation here exits with E0092 because there's no
+// sw-launch.toml in the test cwd.
 #[test]
-fn vendor_sync_returns_not_implemented() {
+fn vendor_sync_with_no_manifest_fails_cleanly() {
     cmd()
         .args(["vendor", "sync"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0092"));
 }
 
 #[test]
-fn vendor_status_returns_not_implemented() {
+fn vendor_status_with_no_lockfile_fires_e0040() {
     cmd()
         .args(["vendor", "status"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0040"));
 }
 
 #[test]

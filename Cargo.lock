@@ -571,9 +571,23 @@ dependencies = [
  "regex",
  "serde",
  "sha2",
+ "sw-launcher-lockfile",
  "sw-launcher-tool",
  "tempfile",
  "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "sw-launcher-lockfile"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "serde",
+ "sha2",
+ "sw-launcher-tool",
+ "tempfile",
  "toml",
 ]
 

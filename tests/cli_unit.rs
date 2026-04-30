@@ -3,7 +3,7 @@
 //! sw-checklist crate-module budget.
 
 use clap::CommandFactory;
-use sw_launcher::cli::{Cli, Commands, VendorAction, dispatch};
+use sw_launcher::cli::{Cli, Commands, dispatch};
 use sw_launcher::error::Error;
 
 fn assert_unimplemented(command: Commands, expected: &str) {
@@ -32,13 +32,6 @@ fn dispatch_returns_not_implemented_for_unimplemented_actions() {
     let scen = || s("x");
     assert_unimplemented(Commands::Graph { scenario: scen() }, "graph");
     // Cache list/explain/clean are wired up as of Phase 4 step 2.
-    let sync = Commands::Vendor {
-        action: VendorAction::Sync,
-    };
-    assert_unimplemented(sync, "vendor sync");
-    let status = Commands::Vendor {
-        action: VendorAction::Status,
-    };
-    assert_unimplemented(status, "vendor status");
+    // Vendor sync/status are wired up as of Phase 4 step 3.
     assert_unimplemented(Commands::Doctor, "doctor");
 }

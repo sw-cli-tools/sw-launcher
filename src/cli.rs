@@ -10,6 +10,8 @@ use std::process::Command;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 
+use sw_launcher_lockfile::{EntryStatus, Lockfile, VendorInput};
+
 use crate::cache::Cache;
 use crate::config::{Config, Expect, Scenario};
 use crate::error::{Error, Result};
@@ -133,6 +135,10 @@ pub enum Commands {
         /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
         #[arg(short, long, default_value = "sw-launch.toml")]
         config: Utf8PathBuf,
+        /// Skip lockfile drift checks; rewrite the lockfile from
+        /// the current state at end of run.
+        #[arg(long)]
+        update_lock: bool,
     },
     /// Build all layers of a scenario; do not execute.
     Build {
@@ -141,6 +147,9 @@ pub enum Commands {
         /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
         #[arg(short, long, default_value = "sw-launch.toml")]
         config: Utf8PathBuf,
+        /// Skip lockfile drift checks.
+        #[arg(long)]
+        update_lock: bool,
     },
     /// Validate config + lockfile for a scenario; no tools spawned.
     Check {
@@ -211,16 +220,32 @@ pub enum CacheAction {
 #[derive(Debug, Subcommand)]
 pub enum VendorAction {
     /// Resolve and pin all dependencies; write the lockfile.
-    Sync,
+    Sync {
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
+    },
     /// Compare TOML vs lockfile vs vendor store.
-    Status,
+    Status {
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
+    },
 }
 
 /// Dispatch a parsed `Cli` to the appropriate handler.
 pub fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::Run { scenario, config } => run_scenario(&config, &scenario),
-        Commands::Build { scenario, config } => build_scenario(&config, &scenario),
+        Commands::Run {
+            scenario,
+            config,
+            update_lock,
+        } => run_scenario(&config, &scenario, update_lock),
+        Commands::Build {
+            scenario,
+            config,
+            update_lock,
+        } => build_scenario(&config, &scenario, update_lock),
         Commands::Check { scenario, config } => check_scenario(&config, &scenario),
         Commands::Graph { .. } => Err(Error::not_implemented("graph")),
         Commands::Cache { action } => match action {
@@ -236,8 +261,8 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             } => cache_clean(cache_dir.as_deref(), older_than.as_deref(), all, dry_run),
         },
         Commands::Vendor { action } => match action {
-            VendorAction::Sync => Err(Error::not_implemented("vendor sync")),
-            VendorAction::Status => Err(Error::not_implemented("vendor status")),
+            VendorAction::Sync { config } => vendor_sync(&config),
+            VendorAction::Status { config } => vendor_status(&config),
         },
         Commands::Doctor => Err(Error::not_implemented("doctor")),
     }
@@ -246,7 +271,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
 /// `sw-launch run <scenario>` end to end:
 /// validate -> assemble layers (with memoization) -> LoadPlan ->
 /// spawn cor24-run -> capture UART -> check expectations.
-fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
+fn run_scenario(config_path: &Utf8Path, scenario: &str, update_lock: bool) -> Result<()> {
     let cfg = Config::from_path(config_path)?;
     let scen = cfg
         .scenarios
@@ -258,6 +283,9 @@ fn run_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
             eprintln!("{d}");
         }
         return Err(Error::cli("validation failed; run aborted".to_string()));
+    }
+    if !update_lock {
+        enforce_lockfile(config_path)?;
     }
     let mut asm = Tool::from_source(
         &SourceSpec::FromPath {
@@ -514,13 +542,16 @@ fn check_expectations(expect: &Expect, uart: &str, exit_code: i32) -> Result<()>
 /// reuses `assemble_artifacts` to dispatch on `Layer.kind`
 /// (assembler / pcode / binary / pcode-image), prints each
 /// produced artifact path. No emulator is spawned.
-fn build_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
+fn build_scenario(config_path: &Utf8Path, scenario: &str, update_lock: bool) -> Result<()> {
     let cfg = Config::from_path(config_path)?;
     let scen = cfg
         .scenarios
         .get(scenario)
         .ok_or_else(|| Error::cli(format!("scenario `{scenario}` not declared")))?
         .clone();
+    if !update_lock {
+        enforce_lockfile(config_path)?;
+    }
     let mut asm = Tool::from_source(
         &SourceSpec::FromPath {
             binary: "cor24-run".into(),
@@ -723,4 +754,174 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
         _ => return Err(Error::cli(format!("unknown duration suffix `{suffix}`"))),
     };
     Ok(n * mult)
+}
+
+/// Walk every layer of every scenario; emit one [`VendorInput`]
+/// per `layer.input` and per `sidecar:<path>` patch term. The
+/// key is the input string as declared in the manifest (so two
+/// machines with different absolute paths for the same vendored
+/// file produce identical lockfiles).
+fn collect_vendor_inputs(cfg: &Config, config_dir: &Utf8Path) -> Result<Vec<VendorInput>> {
+    use std::collections::BTreeSet;
+    let mut keys: BTreeSet<String> = BTreeSet::new();
+    let mut out: Vec<VendorInput> = Vec::new();
+    for layer in cfg.layers.values() {
+        if let Some(input) = layer.input.as_deref() {
+            let resolved: Utf8PathBuf = if Utf8Path::new(input).is_absolute() {
+                Utf8PathBuf::from(input)
+            } else {
+                config_dir.join(input)
+            };
+            if keys.insert(input.to_string()) {
+                out.push(VendorInput {
+                    key: input.to_string(),
+                    resolved_path: resolved,
+                    vendor_repo: None,
+                });
+            }
+        }
+        for p in &layer.patches {
+            for term in [&p.target, &p.value] {
+                if let Some(rel) = term.strip_prefix("sidecar:") {
+                    let key = format!("sidecar:{rel}");
+                    let resolved: Utf8PathBuf = if Utf8Path::new(rel).is_absolute() {
+                        Utf8PathBuf::from(rel)
+                    } else {
+                        config_dir.join(rel)
+                    };
+                    if keys.insert(key.clone()) {
+                        out.push(VendorInput {
+                            key,
+                            resolved_path: resolved,
+                            vendor_repo: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
+}
+
+fn now_iso8601() -> String {
+    // We don't link chrono; format with seconds resolution.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format_unix_iso(secs)
+}
+
+fn format_unix_iso(secs: u64) -> String {
+    // Days from 1970 to year/month/day. Matches RFC 3339 with `Z`.
+    let days = (secs / 86_400) as i64;
+    let secs_today = secs % 86_400;
+    let h = secs_today / 3600;
+    let m = (secs_today % 3600) / 60;
+    let s = secs_today % 60;
+    let (y, mo, d) = civil_from_days(days);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+/// Howard Hinnant's days-to-civil algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn vendor_sync(config_path: &Utf8Path) -> Result<()> {
+    let cfg = Config::from_path(config_path)?;
+    let cfg_dir = config_path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let inputs = collect_vendor_inputs(&cfg, cfg_dir)?;
+    let now = now_iso8601();
+    let lockfile_path = cfg_dir.join("sw-launch.lock");
+    let lockfile = match Lockfile::read_optional(lockfile_path.as_std_path())? {
+        Some(prior) => sw_launcher_lockfile::update_only_drifted(&prior, &inputs, &now)?,
+        None => sw_launcher_lockfile::sync(&inputs, &now)?,
+    };
+    lockfile.write(lockfile_path.as_std_path())?;
+    println!(
+        "wrote {} ({} entries)",
+        lockfile_path,
+        lockfile.vendored.len()
+    );
+    Ok(())
+}
+
+fn vendor_status(config_path: &Utf8Path) -> Result<()> {
+    let cfg_dir = config_path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let lockfile_path = cfg_dir.join("sw-launch.lock");
+    let Some(lockfile) = Lockfile::read_optional(lockfile_path.as_std_path())? else {
+        return Err(Error::cli(format!(
+            "E0040 sw-launch.lock not found at `{lockfile_path}`; run `sw-launch vendor sync` first"
+        )));
+    };
+    let mut all_fresh = true;
+    for (key, status) in lockfile.status() {
+        match status {
+            EntryStatus::Fresh => println!("fresh        {key}"),
+            EntryStatus::Drifted { recorded, observed } => {
+                all_fresh = false;
+                println!("drifted      {key}  recorded={recorded:.16} observed={observed:.16}");
+            }
+            EntryStatus::Unresolvable => {
+                all_fresh = false;
+                println!("unresolvable {key}");
+            }
+            EntryStatus::Unverified(why) => {
+                all_fresh = false;
+                println!("unverified   {key}  ({why})");
+            }
+        }
+    }
+    if !all_fresh {
+        return Err(Error::cli(
+            "E0041 lockfile drift detected; run `sw-launch vendor sync` to update".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Pre-flight check called by `run` and `build`: if a lockfile is
+/// present next to the manifest, every vendored input must hash
+/// to its recorded sha. Returns Err with E0041/E0042 on drift.
+fn enforce_lockfile(config_path: &Utf8Path) -> Result<()> {
+    let cfg_dir = config_path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let lockfile_path = cfg_dir.join("sw-launch.lock");
+    let Some(lockfile) = Lockfile::read_optional(lockfile_path.as_std_path())? else {
+        return Ok(());
+    };
+    let mut drifted: Vec<String> = Vec::new();
+    let mut unresolvable: Vec<String> = Vec::new();
+    for (key, status) in lockfile.status() {
+        match status {
+            EntryStatus::Fresh => {}
+            EntryStatus::Drifted { .. } => drifted.push(key),
+            EntryStatus::Unresolvable => unresolvable.push(key),
+            EntryStatus::Unverified(_) => drifted.push(key),
+        }
+    }
+    if !unresolvable.is_empty() {
+        return Err(Error::cli(format!(
+            "E0042 lockfile entries unresolvable: {}",
+            unresolvable.join(", ")
+        )));
+    }
+    if !drifted.is_empty() {
+        return Err(Error::cli(format!(
+            "E0041 lockfile drift on: {} (run `sw-launch vendor sync` or pass --update-lock)",
+            drifted.join(", ")
+        )));
+    }
+    Ok(())
 }
