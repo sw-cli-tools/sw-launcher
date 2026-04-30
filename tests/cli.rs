@@ -92,31 +92,39 @@ fn graph_returns_not_implemented() {
         .stderr(contains("not yet implemented"));
 }
 
+// Cache subcommands wired up in Phase 4 step 2; smoke-test against
+// a fresh tempdir cache so the binary exits cleanly with no
+// entries.
 #[test]
-fn cache_list_returns_not_implemented() {
+fn cache_list_on_empty_cache_succeeds_silently() {
+    let tmp = tempfile::tempdir().expect("tempdir");
     cmd()
+        .env("SW_LAUNCH_CACHE_DIR", tmp.path())
         .args(["cache", "list"])
         .assert()
-        .failure()
-        .stderr(contains("not yet implemented"));
+        .success();
 }
 
 #[test]
-fn cache_explain_returns_not_implemented() {
+fn cache_explain_with_unknown_prefix_fails_with_no_match() {
+    let tmp = tempfile::tempdir().expect("tempdir");
     cmd()
-        .args(["cache", "explain", "scenario-name"])
+        .env("SW_LAUNCH_CACHE_DIR", tmp.path())
+        .args(["cache", "explain", "deadbeef"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("no cache entry"));
 }
 
 #[test]
-fn cache_clean_returns_not_implemented() {
+fn cache_clean_on_empty_cache_reports_nothing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
     cmd()
+        .env("SW_LAUNCH_CACHE_DIR", tmp.path())
         .args(["cache", "clean"])
         .assert()
-        .failure()
-        .stderr(contains("not yet implemented"));
+        .success()
+        .stdout(contains("nothing to remove"));
 }
 
 #[test]

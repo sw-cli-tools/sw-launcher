@@ -198,7 +198,7 @@ impl Tool {
         let tool_path = self.tool_path.clone();
         let extra = job.extra_args.clone();
         let mut spawned = false;
-        let entry = disk.get_or_fill(key, |dir| {
+        let entry = disk.get_or_fill_with(key, Some(&job.layer_name), |dir| {
             let bin = dir.join(format!("{}.{}", key.output_stem, key.output_ext));
             let lst = dir.join(format!("{}.lst", key.output_stem));
             let bin_utf8 = Utf8PathBuf::from_path_buf(bin.clone())

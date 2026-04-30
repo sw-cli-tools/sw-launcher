@@ -85,6 +85,12 @@ pub struct CacheEntry {
 }
 
 /// Metadata recorded next to the cached artifact.
+///
+/// `layer_name` is informational: it records which layer most
+/// recently filled this entry, for `cache list` to print a useful
+/// column. It does NOT participate in `CacheKey::digest`, so two
+/// scenarios that build the same input bytes share one cache
+/// entry regardless of layer-name.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Provenance {
     pub schema_version: u32,
@@ -98,6 +104,8 @@ pub struct Provenance {
     pub listing_sha256: Option<String>,
     pub created_unix: u64,
     pub host: String,
+    #[serde(default)]
+    pub layer_name: Option<String>,
 }
 
 /// Disk cache rooted at a directory.
@@ -144,6 +152,21 @@ impl Cache {
     where
         F: FnOnce(&Path) -> Result<()>,
     {
+        self.get_or_fill_with(key, None, fill)
+    }
+
+    /// Like [`Cache::get_or_fill`] but also records `layer_name` in
+    /// the entry's `provenance.toml` (informational only; does not
+    /// affect the cache key digest).
+    pub fn get_or_fill_with<F>(
+        &self,
+        key: &CacheKey,
+        layer_name: Option<&str>,
+        fill: F,
+    ) -> Result<CacheEntry>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
         let digest = key.digest();
         let final_dir = self.root.join("artifacts").join(&digest);
         let lock_path = self.root.join("locks").join(format!("{digest}.lock"));
@@ -163,7 +186,7 @@ impl Cache {
         std::fs::create_dir_all(&temp_dir)
             .with_context(|| format!("create temp {}", temp_dir.display()))?;
         fill(&temp_dir).context("cache fill closure")?;
-        let prov = self.write_provenance(key, &temp_dir)?;
+        let prov = self.write_provenance(key, &temp_dir, layer_name)?;
         let _ = std::fs::remove_dir_all(&final_dir);
         std::fs::rename(&temp_dir, &final_dir)
             .with_context(|| format!("rename {} -> {}", temp_dir.display(), final_dir.display()))?;
@@ -211,7 +234,12 @@ impl Cache {
         }))
     }
 
-    fn write_provenance(&self, key: &CacheKey, dir: &Path) -> Result<Provenance> {
+    fn write_provenance(
+        &self,
+        key: &CacheKey,
+        dir: &Path,
+        layer_name: Option<&str>,
+    ) -> Result<Provenance> {
         let bin_path = dir.join(format!("{}.{}", key.output_stem, key.output_ext));
         let bin_bytes = std::fs::read(&bin_path)
             .with_context(|| format!("read filled {}", bin_path.display()))?;
@@ -242,6 +270,7 @@ impl Cache {
                 .ok()
                 .or_else(|| std::env::var("HOST").ok())
                 .unwrap_or_else(|| "unknown".to_string()),
+            layer_name: layer_name.map(|s| s.to_string()),
         };
         let toml_text = toml::to_string_pretty(&prov).context("serialize provenance")?;
         let prov_path = dir.join("provenance.toml");
@@ -250,6 +279,121 @@ impl Cache {
         f.write_all(toml_text.as_bytes())?;
         Ok(prov)
     }
+
+    /// List every entry under `artifacts/`, returning each entry's
+    /// digest, parsed provenance, and on-disk size in bytes.
+    /// Skips temp dirs (`.tmp-*`) and entries with malformed
+    /// provenance.
+    pub fn list(&self) -> Result<Vec<CacheListing>> {
+        let artifacts = self.root.join("artifacts");
+        let read = match std::fs::read_dir(&artifacts) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e).with_context(|| format!("read {}", artifacts.display())),
+        };
+        let mut out = Vec::new();
+        for entry in read.flatten() {
+            let dir = entry.path();
+            let name = match dir.file_name().and_then(|s| s.to_str()) {
+                Some(n) if !n.starts_with(".tmp") && !n.starts_with('.') => n.to_string(),
+                _ => continue,
+            };
+            let prov_path = dir.join("provenance.toml");
+            let text = match std::fs::read_to_string(&prov_path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let prov: Provenance = match toml::from_str(&text) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let size = dir_size_bytes(&dir);
+            out.push(CacheListing {
+                digest: name,
+                dir,
+                provenance: prov,
+                size_bytes: size,
+            });
+        }
+        out.sort_by(|a, b| a.digest.cmp(&b.digest));
+        Ok(out)
+    }
+
+    /// Return the unique entry whose digest starts with `prefix`.
+    /// Errors if zero or multiple entries match.
+    pub fn find_by_prefix(&self, prefix: &str) -> Result<CacheListing> {
+        let all = self.list()?;
+        let mut matches: Vec<_> = all
+            .into_iter()
+            .filter(|e| e.digest.starts_with(prefix))
+            .collect();
+        if matches.is_empty() {
+            return Err(anyhow!("no cache entry matches prefix `{prefix}`"));
+        }
+        if matches.len() > 1 {
+            let names: Vec<_> = matches
+                .iter()
+                .map(|e| e.digest[..16.min(e.digest.len())].to_string())
+                .collect();
+            return Err(anyhow!(
+                "prefix `{prefix}` is ambiguous; matches {} entries: {}",
+                matches.len(),
+                names.join(", ")
+            ));
+        }
+        Ok(matches.remove(0))
+    }
+
+    /// Delete every entry whose `provenance.created_unix` is older
+    /// than `now - older_than_secs`. Returns the digests that were
+    /// (or would be, when `dry_run`) removed.
+    pub fn clean<F>(&self, predicate: F, dry_run: bool) -> Result<Vec<CacheListing>>
+    where
+        F: Fn(&Provenance) -> bool,
+    {
+        let mut removed = Vec::new();
+        for entry in self.list()? {
+            if !predicate(&entry.provenance) {
+                continue;
+            }
+            if !dry_run {
+                std::fs::remove_dir_all(&entry.dir)
+                    .with_context(|| format!("remove {}", entry.dir.display()))?;
+                let lock = self
+                    .root
+                    .join("locks")
+                    .join(format!("{}.lock", entry.digest));
+                let _ = std::fs::remove_file(lock);
+            }
+            removed.push(entry);
+        }
+        Ok(removed)
+    }
+}
+
+/// One row returned by [`Cache::list`].
+#[derive(Debug, Clone)]
+pub struct CacheListing {
+    pub digest: String,
+    pub dir: PathBuf,
+    pub provenance: Provenance,
+    pub size_bytes: u64,
+}
+
+fn dir_size_bytes(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    total += meta.len();
+                } else if meta.is_dir() {
+                    total += dir_size_bytes(&entry.path());
+                }
+            }
+        }
+    }
+    total
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {

@@ -1,6 +1,6 @@
 number = 2
 slug = "cache-explain-list-clean"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 2: cache-explain-list-clean
 

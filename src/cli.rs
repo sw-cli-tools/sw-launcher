@@ -173,14 +173,38 @@ pub enum Commands {
 #[derive(Debug, Subcommand)]
 pub enum CacheAction {
     /// List cached artifacts.
-    List,
-    /// Show cache hit/miss for each layer of a scenario.
-    Explain {
-        /// Name of the scenario in `sw-launch.toml`.
-        scenario: String,
+    List {
+        /// Emit JSON instead of a human-readable table.
+        #[arg(long)]
+        json: bool,
+        /// Override the cache root (otherwise SW_LAUNCH_CACHE_DIR /
+        /// XDG_CACHE_HOME / ~/.cache/sw-launch).
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
     },
-    /// Drop cache entries.
-    Clean,
+    /// Show one entry's full provenance and on-disk paths.
+    Explain {
+        /// Digest prefix; resolves to a unique entry under the cache.
+        prefix: String,
+        /// Override the cache root.
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
+    },
+    /// Drop cache entries older than a TTL (default 30 days), or all.
+    Clean {
+        /// Drop entries older than this duration (e.g. "7d", "12h").
+        #[arg(long)]
+        older_than: Option<String>,
+        /// Drop every entry regardless of age.
+        #[arg(long)]
+        all: bool,
+        /// Print what would be removed without acting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Override the cache root.
+        #[arg(long)]
+        cache_dir: Option<Utf8PathBuf>,
+    },
 }
 
 /// `sw-launch vendor <action>` subcommands.
@@ -200,9 +224,16 @@ pub fn dispatch(cli: Cli) -> Result<()> {
         Commands::Check { scenario, config } => check_scenario(&config, &scenario),
         Commands::Graph { .. } => Err(Error::not_implemented("graph")),
         Commands::Cache { action } => match action {
-            CacheAction::List => Err(Error::not_implemented("cache list")),
-            CacheAction::Explain { .. } => Err(Error::not_implemented("cache explain")),
-            CacheAction::Clean => Err(Error::not_implemented("cache clean")),
+            CacheAction::List { json, cache_dir } => cache_list(cache_dir.as_deref(), json),
+            CacheAction::Explain { prefix, cache_dir } => {
+                cache_explain(cache_dir.as_deref(), &prefix)
+            }
+            CacheAction::Clean {
+                older_than,
+                all,
+                dry_run,
+                cache_dir,
+            } => cache_clean(cache_dir.as_deref(), older_than.as_deref(), all, dry_run),
         },
         Commands::Vendor { action } => match action {
             VendorAction::Sync => Err(Error::not_implemented("vendor sync")),
@@ -533,3 +564,163 @@ fn check_scenario(config_path: &Utf8Path, scenario: &str) -> Result<()> {
 // Tests moved to `tests/cli_unit.rs` to keep module count under
 // the sw-checklist crate-module budget. CLI integration tests
 // remain in `tests/cli.rs`.
+
+fn open_cache_at(cache_dir: Option<&Utf8Path>) -> Result<Cache> {
+    Ok(match cache_dir {
+        Some(p) => Cache::open_at(p.as_std_path().to_path_buf())?,
+        None => Cache::open_default()?,
+    })
+}
+
+fn cache_list(cache_dir: Option<&Utf8Path>, json: bool) -> Result<()> {
+    let cache = open_cache_at(cache_dir)?;
+    let entries = cache.list()?;
+    if json {
+        let json = format_list_json(&entries);
+        println!("{json}");
+        return Ok(());
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    println!(
+        "{:<16}  {:<24}  {:<16}  {:<10}  {:<8}  CREATED",
+        "DIGEST", "LAYER", "TOOL", "INPUT-SHA", "SIZE"
+    );
+    for e in &entries {
+        let layer = e.provenance.layer_name.as_deref().unwrap_or("-");
+        let tool = std::path::Path::new(&e.provenance.tool_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("-");
+        let input = &e.provenance.input_sha256[..8.min(e.provenance.input_sha256.len())];
+        println!(
+            "{:<16}  {:<24}  {:<16}  {:<10}  {:>5}KB  {}",
+            &e.digest[..16.min(e.digest.len())],
+            truncate(layer, 24),
+            truncate(tool, 16),
+            input,
+            e.size_bytes.div_ceil(1024),
+            e.provenance.created_unix
+        );
+    }
+    Ok(())
+}
+
+fn format_list_json(entries: &[sw_launcher_tool::cache::CacheListing]) -> String {
+    let mut out = String::from("[");
+    for (i, e) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"digest\":\"{}\",\"layer\":{},\"tool_path\":\"{}\",\"input_sha256\":\"{}\",\"size_bytes\":{},\"created_unix\":{}}}",
+            e.digest,
+            match &e.provenance.layer_name {
+                Some(s) => format!("\"{s}\""),
+                None => "null".to_string(),
+            },
+            e.provenance.tool_path.replace('\\', "\\\\").replace('"', "\\\""),
+            e.provenance.input_sha256,
+            e.size_bytes,
+            e.provenance.created_unix,
+        ));
+    }
+    out.push(']');
+    out
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max.saturating_sub(3)])
+    }
+}
+
+fn cache_explain(cache_dir: Option<&Utf8Path>, prefix: &str) -> Result<()> {
+    let cache = open_cache_at(cache_dir)?;
+    let entry = cache.find_by_prefix(prefix)?;
+    println!("digest:        {}", entry.digest);
+    println!("dir:           {}", entry.dir.display());
+    println!("size_bytes:    {}", entry.size_bytes);
+    let p = &entry.provenance;
+    println!("tool_path:     {}", p.tool_path);
+    if let Some(layer) = &p.layer_name {
+        println!("layer:         {layer}");
+    }
+    println!("input_sha256:  {}", p.input_sha256);
+    println!("output_stem:   {}", p.output_stem);
+    println!("output_ext:    {}", p.output_ext);
+    println!("with_listing:  {}", p.with_listing);
+    println!("artifact_sha:  {}", p.artifact_sha256);
+    if let Some(s) = &p.listing_sha256 {
+        println!("listing_sha:   {s}");
+    }
+    if !p.extra_args.is_empty() {
+        println!("extra_args:    {:?}", p.extra_args);
+    }
+    println!("created_unix:  {}", p.created_unix);
+    println!("host:          {}", p.host);
+    Ok(())
+}
+
+fn cache_clean(
+    cache_dir: Option<&Utf8Path>,
+    older_than: Option<&str>,
+    all: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let cache = open_cache_at(cache_dir)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let cutoff = if all {
+        u64::MAX
+    } else {
+        let secs = match older_than {
+            Some(s) => parse_duration_secs(s)?,
+            None => 30 * 24 * 60 * 60,
+        };
+        now.saturating_sub(secs)
+    };
+    let removed = cache.clean(
+        |p| {
+            if all { true } else { p.created_unix <= cutoff }
+        },
+        dry_run,
+    )?;
+    let verb = if dry_run { "would remove" } else { "removed" };
+    if removed.is_empty() {
+        println!("nothing to remove");
+        return Ok(());
+    }
+    for e in &removed {
+        let short = &e.digest[..16.min(e.digest.len())];
+        let layer = e.provenance.layer_name.as_deref().unwrap_or("-");
+        println!("{verb} {short}  {layer}");
+    }
+    println!("total: {} entry/entries", removed.len());
+    Ok(())
+}
+
+fn parse_duration_secs(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (num, suffix) = match s.find(|c: char| !c.is_ascii_digit()) {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, "s"),
+    };
+    let n: u64 = num
+        .parse()
+        .map_err(|_| Error::cli(format!("invalid duration `{s}`")))?;
+    let mult: u64 = match suffix {
+        "s" | "" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 7 * 86_400,
+        _ => return Err(Error::cli(format!("unknown duration suffix `{suffix}`"))),
+    };
+    Ok(n * mult)
+}
