@@ -1,6 +1,6 @@
 number = 1
 slug = "disk-cache-layout"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 1: disk-cache-layout
 
@@ -8,4 +8,5 @@ Replace the in-process `HashMap` cache in `src/t..."""
 role = "production"
 context_files = []
 created_at = "2026-04-29T16:07:54"
-commits = []
+completed_at = "2026-04-30T13:41:13"
+commits = ["8f04b46b4073d5fa140b08a34a57436d2947dbdf"]

@@ -1,0 +1,11 @@
+number = 2
+slug = "cache-explain-list-clean"
+status = "pending"
+description = """
+# Step 2: cache-explain-list-clean
+
+Add the user-facing CLI on top of the dis..."""
+role = "legacy"
+context_files = []
+created_at = "2026-04-30T13:41:13"
+commits = []
