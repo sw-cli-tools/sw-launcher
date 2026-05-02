@@ -175,7 +175,16 @@ pub enum Commands {
         action: VendorAction,
     },
     /// Verify that host tools (cor24-run, pa24r, ...) are reachable.
-    Doctor,
+    Doctor {
+        /// Optional path to `sw-launch.toml`; when set, also
+        /// verifies every layer.input + sidecar resolves and the
+        /// lockfile is fresh.
+        #[arg(short, long)]
+        config: Option<Utf8PathBuf>,
+        /// Emit JSON instead of a human-readable table.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// `sw-launch cache <action>` subcommands.
@@ -264,7 +273,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             VendorAction::Sync { config } => vendor_sync(&config),
             VendorAction::Status { config } => vendor_status(&config),
         },
-        Commands::Doctor => Err(Error::not_implemented("doctor")),
+        Commands::Doctor { config, json } => crate::doctor::run(config.as_deref(), json),
     }
 }
 

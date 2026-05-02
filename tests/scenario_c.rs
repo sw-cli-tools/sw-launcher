@@ -51,8 +51,14 @@ fn fixture_dir() -> PathBuf {
 }
 
 fn tmp_dir(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut p = std::env::temp_dir();
-    p.push(format!("sw-launcher-{name}-{}", std::process::id()));
+    p.push(format!(
+        "sw-launcher-{name}-{}-{n}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p

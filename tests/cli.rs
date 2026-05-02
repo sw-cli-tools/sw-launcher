@@ -149,13 +149,19 @@ fn vendor_status_with_no_lockfile_fires_e0040() {
         .stderr(contains("E0040"));
 }
 
+// Doctor wired up in Phase 4 step 4. The host environment for
+// CI may or may not have cor24-run on PATH, so we only assert
+// that the binary exits cleanly (0 with cor24-run present, 1
+// otherwise) and that the table prints recognizable rows.
 #[test]
-fn doctor_returns_not_implemented() {
-    cmd()
-        .arg("doctor")
-        .assert()
-        .failure()
-        .stderr(contains("not yet implemented"));
+fn doctor_runs_and_prints_recognizable_rows() {
+    let assert = cmd().arg("doctor").assert();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
+    assert!(
+        stdout.contains("cor24-run"),
+        "doctor should always print a cor24-run row; got:\n{stdout}"
+    );
+    assert!(stdout.contains("cache"));
 }
 
 #[test]

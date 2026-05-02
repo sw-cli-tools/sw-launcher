@@ -124,7 +124,6 @@ impl Lockfile {
             .map(|e| (e.key.clone(), check_entry(e)))
             .collect()
     }
-
 }
 
 fn check_entry(e: &VendoredEntry) -> EntryStatus {

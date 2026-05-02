@@ -33,5 +33,5 @@ fn dispatch_returns_not_implemented_for_unimplemented_actions() {
     assert_unimplemented(Commands::Graph { scenario: scen() }, "graph");
     // Cache list/explain/clean are wired up as of Phase 4 step 2.
     // Vendor sync/status are wired up as of Phase 4 step 3.
-    assert_unimplemented(Commands::Doctor, "doctor");
+    // Doctor is wired up as of Phase 4 step 4.
 }
