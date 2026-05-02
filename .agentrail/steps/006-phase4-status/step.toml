@@ -1,0 +1,13 @@
+number = 6
+slug = "phase4-status"
+status = "pending"
+description = '''
+# Step 6: phase4-status
+
+Standard phase close-out:
+
+1. \`docs/status.md\`: ma...'''
+role = "legacy"
+context_files = []
+created_at = "2026-05-02T12:23:05"
+commits = []

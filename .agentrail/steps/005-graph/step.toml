@@ -1,6 +1,6 @@
 number = 5
 slug = "graph"
-status = "in-progress"
+status = "completed"
 description = '''
 # Step 5: graph
 
@@ -8,4 +8,5 @@ description = '''
 role = "legacy"
 context_files = []
 created_at = "2026-05-02T12:10:01"
-commits = []
+completed_at = "2026-05-02T12:23:05"
+commits = ["5fd4a56f3405dc96b09aed8fdf046d5aefef5f6c"]
