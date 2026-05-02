@@ -83,13 +83,16 @@ fn check_with_missing_config_fails_cleanly() {
         .stderr(contains("E0091").or(contains("E0092")));
 }
 
+// Graph wired up in Phase 4 step 5; no manifest in test cwd
+// makes the binary fail with E0092 (file not found) rather
+// than a NotImplemented error.
 #[test]
-fn graph_returns_not_implemented() {
+fn graph_with_no_manifest_fails_cleanly() {
     cmd()
         .args(["graph", "any"])
         .assert()
         .failure()
-        .stderr(contains("not yet implemented"));
+        .stderr(contains("E0092"));
 }
 
 // Cache subcommands wired up in Phase 4 step 2; smoke-test against

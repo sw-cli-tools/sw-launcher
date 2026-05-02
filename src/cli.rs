@@ -163,6 +163,12 @@ pub enum Commands {
     Graph {
         /// Name of the scenario in `sw-launch.toml`.
         scenario: String,
+        /// Path to `sw-launch.toml` (default: ./sw-launch.toml).
+        #[arg(short, long, default_value = "sw-launch.toml")]
+        config: Utf8PathBuf,
+        /// Emit JSON instead of a human-readable tree.
+        #[arg(long)]
+        json: bool,
     },
     /// Inspect or clean the build cache.
     Cache {
@@ -256,7 +262,11 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             update_lock,
         } => build_scenario(&config, &scenario, update_lock),
         Commands::Check { scenario, config } => check_scenario(&config, &scenario),
-        Commands::Graph { .. } => Err(Error::not_implemented("graph")),
+        Commands::Graph {
+            scenario,
+            config,
+            json,
+        } => crate::graph::run(&config, &scenario, json),
         Commands::Cache { action } => match action {
             CacheAction::List { json, cache_dir } => cache_list(cache_dir.as_deref(), json),
             CacheAction::Explain { prefix, cache_dir } => {
