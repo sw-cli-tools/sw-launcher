@@ -1,0 +1,1 @@
+Phase 4 complete: cache + lockfile + doctor + graph all shipped on top of Phase 1-3 runtime; 117 tests / 25 binaries pass; opening Phase 5 for sub-crate split and multi-target stubs.
