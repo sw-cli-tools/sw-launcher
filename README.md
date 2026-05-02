@@ -72,21 +72,23 @@ lockfile.
 
 ## Status
 
-**Phase 3 complete (2026-04-29)**: Scenarios A, B, and C all run
-end to end against the real COR24 emulator. `sw-launch run
-nested-demo` builds a Pascal-compiled OCaml interpreter on top of
-the p-code VM, patches `code_ptr` and `heap_limit` from sidecar
-files in the OCaml repo's build dir, delivers the source program
-through UART with EOT, and asserts on the captured UART output.
-86 tests across 16 binaries pass; the integration tests gate
-cleanly on the presence of `cor24-run`, `pa24r`, `p24-load`, and
-the vendored sw-cor24-* sibling repos.
+**Phase 4 complete (2026-05-02)**: All operational subcommands
+shipped on top of the Phase 1-3 runtime engine. Scenarios A, B,
+and C still run end to end; on top of that, `sw-launch` now ships
+a content-addressed disk cache (survives between runs),
+`sw-launch.lock` with `vendor sync` / `vendor status` drift
+detection, `sw-launch doctor` host-environment checker, and
+`sw-launch graph <scenario>` DAG output (text and JSON). 117
+tests across 25 binaries pass; two new sub-crates
+(`sw-launcher-tool`, `sw-launcher-lockfile`) take pressure off
+the main crate's per-module budgets.
 
-Phase 4 (disk-persistent content-addressed cache, `sw-launch.lock`
-with vendor-drift detection, `sw-launch doctor`, `sw-launch graph`)
-is described in [`docs/saga-phase4-plan.md`](docs/saga-phase4-plan.md).
-See [`docs/status.md`](docs/status.md) for the live phase tracker
-and Phase 1 + Phase 2 + Phase 3 closure summaries.
+Phase 5 (extract `validate` and `manifest` into sub-crates,
+wire heap-budget enforcement into `run`/`build`, stub `Target`
+backends for RCA 1802 and IBM 1130) is described in
+[`docs/saga-phase5-plan.md`](docs/saga-phase5-plan.md). See
+[`docs/status.md`](docs/status.md) for the live phase tracker
+and Phase 1 + 2 + 3 + 4 closure summaries.
 
 ## Documentation
 

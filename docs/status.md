@@ -1,6 +1,6 @@
 # sw-launcher Status
 
-Last updated: 2026-04-29
+Last updated: 2026-05-02
 
 ## At a glance
 
@@ -22,8 +22,8 @@ Last updated: 2026-04-29
 | 1     | Skeleton + Scenario A end-to-end       | done 2026-04-28 |
 | 2     | Scenario B end-to-end (runtime + p-code) | done 2026-04-29 |
 | 3     | Scenario C (nested interpreter)        | done 2026-04-29 |
-| 4     | Caching, vendor sync, doctor, graph    | not started; plan in docs/saga-phase4-plan.md |
-| 5     | Multi-target stubs (deferred)          | not started     |
+| 4     | Caching, vendor sync, doctor, graph    | done 2026-05-02 |
+| 5     | Sub-crate split + multi-target stubs   | not started; plan in docs/saga-phase5-plan.md |
 
 ## Phase 1 closure (2026-04-28)
 
@@ -270,25 +270,137 @@ finishes the split for `validate` and `manifest`.
 | Phase 2 |  73  |  15      | scenario_b (pvm + p-code) |
 | Phase 3 |  86  |  16      | scenario_c (nested OCaml) |
 
+## Phase 4 closure (2026-05-02)
+
+Phase 4 saga (`sw-launcher-phase4`, 6 steps) closed cleanly.
+Operational surface complete: disk-persistent content-
+addressed cache, `sw-launch.lock` with drift detection,
+`sw-launch doctor` host-environment checker, and
+`sw-launch graph <scenario>` DAG output (text and JSON).
+Two new sub-crates (`sw-launcher-tool`, `sw-launcher-lockfile`)
+take pressure off the main crate's per-module budgets, the
+beginning of the sub-crate split that Phases 1-3 documented
+as the running remediation. 117 tests / 25 binaries pass.
+
+### Versions the Phase 4 integration tests ran against
+
+| component                | version                              |
+|--------------------------|--------------------------------------|
+| `cor24-run`              | 0.1.0 (Copyright (c) 2026 Michael A Wright; MIT) |
+| `pa24r`                  | sw-cor24-pcode/target/release (sibling) |
+| `p24-load`               | sw-cor24-pcode/target/release (sibling) |
+| Rust toolchain           | rustc 1.94.1 (e408947bf 2026-03-25)  |
+
+### Steps closed in this saga
+
+1. `001-disk-cache-layout` -- new `crates/sw-launcher-tool`
+   sub-crate with content-addressed disk cache under
+   `${SW_LAUNCH_CACHE_DIR:-${XDG_CACHE_HOME:-~/.cache}/sw-launch}/`;
+   `Cache::get_or_fill` uses `File::lock` for serialization,
+   atomic temp-dir-rename for commit, and `provenance.toml`
+   sha verification. `Tool::build` goes hot HashMap -> warm
+   disk cache -> cold tool spawn.
+2. `002-cache-explain-list-clean` -- `sw-launch cache list`
+   (table + `--json`), `cache explain <prefix>` (full
+   provenance for unique digest match), `cache clean`
+   (`--older-than 7d/12h`, `--all`, `--dry-run`).
+   `Provenance.layer_name` recorded but not part of digest.
+3. `003-vendor-lockfile` -- new
+   `crates/sw-launcher-lockfile` sub-crate. `vendor sync`
+   walks layers + sidecar paths, writes sw-launch.lock
+   atomically (sorted by key). `vendor status` reports
+   drift. `run`/`build` consult lockfile pre-flight; fire
+   E0041 on drift / E0042 on unresolvable path; `--update-
+   lock` bypasses.
+4. `004-doctor` -- `sw-launch doctor` runs cor24-run
+   --version, pa24r/p24-load on PATH, cache dir writable,
+   plus optional manifest walk (every layer.input + sidecar
+   resolves) and lockfile freshness. Human table + `--json`.
+   Drive-by fix: scenario_c.rs's tmp_dir race between two
+   tests sharing a dir name.
+5. `005-graph` -- `sw-launch graph <scenario>` text + `--json`
+   DAG output. Edges from cross-layer patches; implicit
+   declaration-order edges keep the chain rendered when no
+   patches exist. Hand-rolled JSON serializer (no
+   serde_json dep).
+6. `006-phase4-status` -- this entry; closes the saga and
+   drafts `docs/saga-phase5-plan.md`.
+
+### What runs today (Phase 4)
+
+Every Phase 1-3 fixture runs unchanged. Beyond that:
+
+```bash
+sw-launch cache list                  # table of cached entries
+sw-launch cache explain <prefix>      # full provenance
+sw-launch cache clean --older-than 30d
+sw-launch vendor sync                 # write sw-launch.lock
+sw-launch vendor status               # exit non-zero on drift
+sw-launch doctor [--config ...] [--json]
+sw-launch graph <scenario> [--json]
+```
+
+`sw-launch run` and `sw-launch build` now consult the
+lockfile when present and refuse drifted runs unless
+`--update-lock` is passed.
+
+### Carry-forward sw-checklist failures (14)
+
+Phase 4's sub-crate split moved many of the Phase 1-3
+failures into per-sub-crate budgets without dropping the
+total count: each new sub-crate's API genuinely decomposes
+into more than 7 primitives. The remaining list:
+
+```
+File LOC [sw-launcher]: validate.rs                       817 lines
+File LOC [sw-launcher]: cli.rs                            936 lines
+Function LOC [sw-launcher]: 'resolve_patch_term'           62 lines
+Function LOC [sw-launcher]: 'check_patch_term'             62 lines
+Function LOC [sw-launcher]: 'assemble_artifacts'          126 lines
+Module Function Count [sw-launcher]: manifest.rs            8 fns
+Module Function Count [sw-launcher]: validate.rs           23 fns
+Module Function Count [sw-launcher]: cli.rs                21 fns
+Module Function Count [sw-launcher]: doctor.rs              9 fns
+Crate Module Count [sw-launcher]                            8 modules
+Module Function Count [sw-launcher-lockfile]: lib.rs       10 fns
+Module Function Count [sw-launcher-tool]: cache.rs         12 fns
+Module Function Count [sw-launcher-tool]: tool.rs          11 fns
+Function LOC [sw-launcher-tool]: 'build_via_disk'          55 lines
+```
+
+Phase 5 step 1 (extract `sw-launcher-validate`) and step 2
+(extract `sw-launcher-manifest`) drop the validate.rs +
+manifest.rs failures and bring the main-crate module count
+back under cap. The remaining function-LOC fails on
+`resolve_patch_term` / `check_patch_term` /
+`assemble_artifacts` / `build_via_disk` are bigger
+decomposition decisions deferred to later phases.
+
+### Test-corpus growth across phases
+
+| phase  | tests | binaries | new end-to-end fixtures   |
+|--------|-------|----------|---------------------------|
+| Phase 1 |  60  |  11      | scenario_a (echo, UART)   |
+| Phase 2 |  73  |  15      | scenario_b (pvm + p-code) |
+| Phase 3 |  86  |  16      | scenario_c (nested OCaml) |
+| Phase 4 | 117  |  25      | cache_persist + cache_cli + vendor_cli + doctor_cli + graph_cli |
+
 ## What's next
 
-Phase 4 (`sw-launcher-phase4`) is described in
-[`docs/saga-phase4-plan.md`](saga-phase4-plan.md). It hardens
-what Phases 1-3 produced rather than adding new scenario
-shapes:
+Phase 5 (`sw-launcher-phase5`) is described in
+[`docs/saga-phase5-plan.md`](saga-phase5-plan.md). It does the
+sub-crate cleanup the prior phases deferred and stubs two
+additional emulator backends:
 
-1. Disk-persistent content-addressed cache under
-   `~/.cache/sw-launch/` (replaces the in-process HashMap).
-2. `cache list / explain / clean` subcommands.
-3. `sw-launch.lock` writer/reader + drift detection
-   (E0040..E0042).
-4. `sw-launch doctor` host-environment checker.
-5. `sw-launch graph <scenario>` text + `--json` DAG output.
-6. Status close-out + Phase 5 seed.
+1. Extract `validate` into `sw-launcher-validate` sub-crate.
+2. Extract `manifest` into `sw-launcher-manifest` sub-crate.
+3. Wire heap-budget enforcement (E0028..E0034) into
+   `run`/`build` (currently only fires in `sw-launch check`).
+4. Stub `Target::Rca1802` backend (errors with E0050).
+5. Stub `Target::Ibm1130` backend (same).
+6. Status close-out + Phase 6 seed.
 
-Phase 4 step 1 begins the sub-crate extraction (`sw-launcher-
-tool`) that the running sw-checklist trade-off list
-documents as the planned remediation.
+End-of-Phase-5 target: 14 -> 9 sw-checklist failures.
 
 ## Schema v1.1 (2026-04-28)
 
