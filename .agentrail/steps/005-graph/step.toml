@@ -1,0 +1,11 @@
+number = 5
+slug = "graph"
+status = "pending"
+description = '''
+# Step 5: graph
+
+\`sw-launch graph <scenario>\` prints the layer DAG so users...'''
+role = "legacy"
+context_files = []
+created_at = "2026-05-02T12:10:01"
+commits = []
