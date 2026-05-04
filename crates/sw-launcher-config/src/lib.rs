@@ -13,12 +13,36 @@
 //! for the budget rationale.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 
+use anyhow::{Context, Result, anyhow};
 use camino::Utf8Path;
 use serde::Deserialize;
 
-use crate::error::{Error, Result};
+/// Stable identifier for a user-visible diagnostic.
+///
+/// Format: `E0xxx` where `xxx` is a zero-padded decimal. Lives in
+/// `sw-launcher-config` (since both the validate sub-crate and
+/// the main crate's `error` module need it). The full catalogue
+/// is in `docs/design.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorCode(pub u16);
+
+impl ErrorCode {
+    /// `E0090`: action requested is implemented in a later step.
+    pub const NOT_IMPLEMENTED: ErrorCode = ErrorCode(90);
+    /// `E0091`: malformed CLI arguments not caught by clap itself.
+    pub const CLI: ErrorCode = ErrorCode(91);
+    /// `E0092`: I/O error reading or writing a file.
+    pub const IO: ErrorCode = ErrorCode(92);
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "E{:04}", self.0)
+    }
+}
 
 /// Top-level shape of `sw-launch.toml`.
 #[derive(Debug, Deserialize, PartialEq)]
@@ -46,19 +70,19 @@ impl Config {
     /// expects a `Result<Self, Self::Err>` shape we don't want to
     /// commit to as a public contract.
     pub fn from_toml_str(s: &str) -> Result<Self> {
-        let cfg: Config = toml::from_str(s).map_err(|e| Error::cli(e.to_string()))?;
+        let cfg: Config = toml::from_str(s).map_err(|e| anyhow!("{e}"))?;
         if cfg.schema_version != 1 {
-            return Err(Error::cli(format!(
+            return Err(anyhow!(
                 "schema_version must be 1 (got {})",
                 cfg.schema_version
-            )));
+            ));
         }
         Ok(cfg)
     }
 
     /// Parse a `Config` from a path on disk.
     pub fn from_path(path: &Utf8Path) -> Result<Self> {
-        let s = fs::read_to_string(path).map_err(|source| Error::Io { source })?;
+        let s = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
         Self::from_toml_str(&s)
     }
 }
@@ -428,13 +452,12 @@ impl SizeOrAuto {
 pub fn parse_hex_u32(s: &str) -> Result<u32> {
     let stripped = s
         .strip_prefix("0x")
-        .ok_or_else(|| Error::cli(format!("hex literal must start with 0x: {s:?}")))?;
+        .ok_or_else(|| anyhow!("hex literal must start with 0x: {s:?}"))?;
     let cleaned: String = stripped.chars().filter(|&c| c != '_').collect();
     if cleaned.is_empty() {
-        return Err(Error::cli(format!("hex literal has no digits: {s:?}")));
+        return Err(anyhow!("hex literal has no digits: {s:?}"));
     }
-    u32::from_str_radix(&cleaned, 16)
-        .map_err(|e| Error::cli(format!("invalid hex literal {s:?}: {e}")))
+    u32::from_str_radix(&cleaned, 16).map_err(|e| anyhow!("invalid hex literal {s:?}: {e}"))
 }
 
 // Unit tests live in `tests/config_unit.rs` (integration test).

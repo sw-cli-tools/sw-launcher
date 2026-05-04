@@ -3,7 +3,7 @@
 //! Lives outside `src/config.rs` so the source module stays under
 //! sw-checklist's file-LOC and function-count budgets.
 
-use sw_launcher::config::{
+use sw_launcher_config::{
     Config, HeapCategory, HexValue, LoadMethod, MemRegionKind, SegmentKind, SizeOrAuto,
     parse_hex_u32,
 };

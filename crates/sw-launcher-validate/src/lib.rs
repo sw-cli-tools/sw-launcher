@@ -16,11 +16,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::config::{
-    Config, HeapCategory, Layer, LoadMethod, MemRange, MemoryProfile, Patch, Scenario, Segment,
-    SegmentKind, SizeOrAuto, Target,
+use sw_launcher_config::{
+    Config, ErrorCode, HeapCategory, Layer, LoadMethod, MemRange, MemoryProfile, Patch, Scenario,
+    Segment, SegmentKind, SizeOrAuto, Target,
 };
-use crate::error::ErrorCode;
 
 /// Severity for a diagnostic. Errors fail the run; warnings are
 /// reported but do not change exit status unless `--strict`.
@@ -252,7 +251,7 @@ mod rules {
     }
 
     fn check_patch(name: &str, p: &Patch, cfg: &Config, out: &mut Vec<Diagnostic>) {
-        if p.target.starts_with("0x") && crate::config::parse_hex_u32(&p.target).is_err() {
+        if p.target.starts_with("0x") && sw_launcher_config::parse_hex_u32(&p.target).is_err() {
             out.push(
                 Diagnostic::error(
                     ErrorCode(6),
@@ -271,7 +270,7 @@ mod rules {
                 .with_layer(name)
                 .with_hint("move this patch into a [[layers.<n>.segments]] entry"),
             );
-        } else if v.starts_with("0x") && crate::config::parse_hex_u32(v).is_err() {
+        } else if v.starts_with("0x") && sw_launcher_config::parse_hex_u32(v).is_err() {
             out.push(
                 Diagnostic::error(
                     ErrorCode(6),

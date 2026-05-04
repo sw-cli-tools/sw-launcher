@@ -6,11 +6,15 @@
 //! resolution) lands in step 006-scenario-validate.
 
 use camino::Utf8PathBuf;
-use sw_launcher::config::{Config, LoadMethod, MemRegionKind, SegmentKind};
+use sw_launcher_config::{Config, LoadMethod, MemRegionKind, SegmentKind};
 
 fn fixture_path(name: &str) -> Utf8PathBuf {
+    // Phase 5 step 1: this test moved into sw-launcher-config
+    // but the fixture .toml files stay in the main crate's
+    // tests/fixtures/ where other binaries (manifest_unit,
+    // scenario_a) also reference them.
     let mut p = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("tests/fixtures");
+    p.push("../../tests/fixtures");
     p.push(name);
     p
 }

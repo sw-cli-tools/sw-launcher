@@ -8,29 +8,10 @@
 //! `validate` module (step 005); this enum currently models only
 //! the runtime-shaped errors the scaffold needs.
 
-use std::fmt;
-
-/// Stable identifier for a user-visible diagnostic.
-///
-/// Format: `E0xxx` where `xxx` is a zero-padded decimal. The full
-/// catalogue is in `docs/design.md`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ErrorCode(pub u16);
-
-impl ErrorCode {
-    /// `E0090`: action requested is implemented in a later step.
-    pub const NOT_IMPLEMENTED: ErrorCode = ErrorCode(90);
-    /// `E0091`: malformed CLI arguments not caught by clap itself.
-    pub const CLI: ErrorCode = ErrorCode(91);
-    /// `E0092`: I/O error reading or writing a file.
-    pub const IO: ErrorCode = ErrorCode(92);
-}
-
-impl fmt::Display for ErrorCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "E{:04}", self.0)
-    }
-}
+// Phase 5 step 1: ErrorCode moved into sw-launcher-config so it
+// can be shared between the validate sub-crate and the main
+// crate's error type without a circular dependency.
+pub use sw_launcher_config::ErrorCode;
 
 /// Top-level error type returned by `cli::dispatch`.
 #[derive(Debug, thiserror::Error)]

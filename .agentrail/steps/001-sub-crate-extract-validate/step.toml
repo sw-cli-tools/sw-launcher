@@ -1,0 +1,11 @@
+number = 1
+slug = "sub-crate-extract-validate"
+status = "in-progress"
+description = """
+# Step 1: sub-crate-extract-validate
+
+The first of the deferred sub-crate spl..."""
+role = "production"
+context_files = []
+created_at = "2026-05-02T16:18:32"
+commits = []

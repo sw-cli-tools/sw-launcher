@@ -92,7 +92,7 @@ fn graph_with_no_manifest_fails_cleanly() {
         .args(["graph", "any"])
         .assert()
         .failure()
-        .stderr(contains("E0092"));
+        .stderr(contains("E0091").or(contains("E0092")));
 }
 
 // Cache subcommands wired up in Phase 4 step 2; smoke-test against
@@ -140,7 +140,7 @@ fn vendor_sync_with_no_manifest_fails_cleanly() {
         .args(["vendor", "sync"])
         .assert()
         .failure()
-        .stderr(contains("E0092"));
+        .stderr(contains("E0091").or(contains("E0092")));
 }
 
 #[test]

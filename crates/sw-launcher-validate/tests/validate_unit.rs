@@ -3,21 +3,21 @@
 //! validates cleanly.
 
 use camino::Utf8PathBuf;
-use sw_launcher::config::Config;
-use sw_launcher::error::ErrorCode;
-use sw_launcher::validate::{Severity, validate};
+use sw_launcher_config::Config;
+use sw_launcher_config::ErrorCode;
+use sw_launcher_validate::{Severity, validate};
 
 fn parse(s: &str) -> Config {
     Config::from_toml_str(s).expect("toml should parse")
 }
 
-fn run(cfg: &Config, scen: &str) -> Vec<sw_launcher::validate::Diagnostic> {
+fn run(cfg: &Config, scen: &str) -> Vec<sw_launcher_validate::Diagnostic> {
     match validate(cfg, scen) {
         Ok(d) | Err(d) => d,
     }
 }
 
-fn has_code(d: &[sw_launcher::validate::Diagnostic], code: u16) -> bool {
+fn has_code(d: &[sw_launcher_validate::Diagnostic], code: u16) -> bool {
     d.iter().any(|x| x.code == ErrorCode(code))
 }
 
@@ -543,7 +543,7 @@ fn e0003_reserved_heap_overlaps_loaded_binary() {
 #[test]
 fn scenario_a_fixture_validates_cleanly() {
     let mut p = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("tests/fixtures/scenario_a.toml");
+    p.push("../../tests/fixtures/scenario_a.toml");
     let cfg = Config::from_path(&p).expect("scenario_a parses");
     let result = validate(&cfg, "echo");
     let warnings_only =

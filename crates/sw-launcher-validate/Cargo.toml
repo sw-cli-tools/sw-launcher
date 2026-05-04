@@ -1,0 +1,16 @@
+[package]
+name = "sw-launcher-validate"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-field validation for sw-launcher manifests (E0001..E0034)"
+license = "MIT"
+repository = "https://github.com/sw-cli-tools/sw-launcher"
+
+[lib]
+name = "sw_launcher_validate"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+camino = { workspace = true }
+sw-launcher-config = { path = "../sw-launcher-config" }

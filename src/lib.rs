@@ -9,12 +9,13 @@
 //! callers and tests don't need to update their import paths.
 
 pub mod cli;
-pub mod config;
 pub mod doctor;
 pub mod error;
 pub mod graph;
 pub mod manifest;
-pub mod validate;
+
+pub use sw_launcher_config as config;
+pub use sw_launcher_validate as validate;
 
 pub use sw_launcher_tool::cache;
 pub use sw_launcher_tool::tool;

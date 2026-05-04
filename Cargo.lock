@@ -571,10 +571,22 @@ dependencies = [
  "regex",
  "serde",
  "sha2",
+ "sw-launcher-config",
  "sw-launcher-lockfile",
  "sw-launcher-tool",
+ "sw-launcher-validate",
  "tempfile",
  "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "sw-launcher-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "serde",
  "toml",
 ]
 
@@ -602,6 +614,15 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "sw-launcher-validate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "sw-launcher-config",
 ]
 
 [[package]]

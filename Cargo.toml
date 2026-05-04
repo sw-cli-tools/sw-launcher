@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/sw-launcher-tool", "crates/sw-launcher-lockfile"]
+members = [
+    "crates/sw-launcher-config",
+    "crates/sw-launcher-lockfile",
+    "crates/sw-launcher-tool",
+    "crates/sw-launcher-validate",
+]
 resolver = "3"
 
 [workspace.dependencies]
@@ -35,8 +40,10 @@ clap = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
+sw-launcher-config = { path = "crates/sw-launcher-config" }
 sw-launcher-lockfile = { path = "crates/sw-launcher-lockfile" }
 sw-launcher-tool = { path = "crates/sw-launcher-tool" }
+sw-launcher-validate = { path = "crates/sw-launcher-validate" }
 thiserror = { workspace = true }
 toml = { workspace = true }
 
