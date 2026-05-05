@@ -15,11 +15,11 @@
 
 use std::collections::BTreeMap;
 
+use anyhow::{Result, anyhow};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::config::{Config, LoadMethod, Scenario, SegmentKind, SizeOrAuto};
-use crate::error::{Error, Result};
-use crate::tool::Listing;
+use sw_launcher_config::{Config, LoadMethod, Scenario, SegmentKind, SizeOrAuto};
+use sw_launcher_tool::tool::Listing;
 
 /// Map of `layer name -> (artifact path, listing)`. Filled by the
 /// step-007 `Assembler` and consumed here. For pure-data layers
@@ -94,7 +94,7 @@ impl LoadPlan {
         let scen = cfg
             .scenarios
             .get(scenario_name)
-            .ok_or_else(|| Error::cli(format!("scenario `{scenario_name}` not declared")))?;
+            .ok_or_else(|| anyhow!("scenario `{scenario_name}` not declared"))?;
         let mut plan = LoadPlan {
             entry: scen.entry.as_u32()?,
             ..LoadPlan::default()
@@ -168,7 +168,7 @@ impl LoadPlan {
 
 fn collect_layer(
     layer_name: &str,
-    layer: &crate::config::Layer,
+    layer: &sw_launcher_config::Layer,
     artifacts: &Artifacts,
     scen: &Scenario,
     plan: &mut LoadPlan,
@@ -190,8 +190,8 @@ fn collect_layer(
 
 fn collect_memory(
     layer_name: &str,
-    layer: &crate::config::Layer,
-    load: &crate::config::LoadSpec,
+    layer: &sw_launcher_config::Layer,
+    load: &sw_launcher_config::LoadSpec,
     artifacts: &Artifacts,
     plan: &mut LoadPlan,
 ) -> Result<()> {
@@ -204,7 +204,7 @@ fn collect_memory(
         .get(layer_name)
         .map(|a| a.artifact.clone())
         .or_else(|| layer.input.as_deref().map(Utf8PathBuf::from))
-        .ok_or_else(|| Error::cli(format!("layer `{layer_name}` has no built artifact path")))?;
+        .ok_or_else(|| anyhow!("layer `{layer_name}` has no built artifact path"))?;
     plan.memory_loads.push(MemoryLoad {
         layer: layer_name.into(),
         path,
@@ -215,12 +215,12 @@ fn collect_memory(
 
 fn collect_uart(
     layer_name: &str,
-    layer: &crate::config::Layer,
-    load: &crate::config::LoadSpec,
+    layer: &sw_launcher_config::Layer,
+    load: &sw_launcher_config::LoadSpec,
     plan: &mut LoadPlan,
 ) -> Result<()> {
     let bytes = if let Some(input) = &layer.input {
-        std::fs::read(input).map_err(|source| Error::Io { source })?
+        std::fs::read(input)?
     } else {
         Vec::new()
     };
@@ -241,8 +241,8 @@ fn collect_uart(
 fn resolve_segment(
     layer_name: &str,
     idx: usize,
-    seg: &crate::config::Segment,
-    layer: &crate::config::Layer,
+    seg: &sw_launcher_config::Segment,
+    layer: &sw_launcher_config::Layer,
     artifacts: &Artifacts,
 ) -> Option<ResolvedSegment> {
     let size = seg
@@ -286,7 +286,7 @@ fn resolve_segment(
 /// supported but resolution failed (missing listing, unknown
 /// symbol).
 fn resolve_patch(
-    p: &crate::config::Patch,
+    p: &sw_launcher_config::Patch,
     _layer_name: &str,
     cfg: &Config,
     artifacts: &Artifacts,
@@ -317,7 +317,7 @@ fn resolve_patch_term(
     config_dir: &Utf8Path,
 ) -> Result<Option<u32>> {
     if term.starts_with("0x") {
-        return Ok(Some(crate::config::parse_hex_u32(term)?));
+        return Ok(Some(sw_launcher_config::parse_hex_u32(term)?));
     }
     if term == "self.address" || term == "self.end" || term == "self.size" {
         return Ok(None); // resolved by segment-block context, step 010
@@ -329,45 +329,41 @@ fn resolve_patch_term(
             config_dir.join(rel)
         };
         let raw = std::fs::read_to_string(path.as_std_path()).map_err(|_| {
-            Error::cli(format!(
-                "E0019 sidecar `{path}` could not be read (referenced by patch term `{term}`)"
-            ))
+            anyhow!("E0019 sidecar `{path}` could not be read (referenced by patch term `{term}`)")
         })?;
         let cleaned = raw.trim();
         let stripped = cleaned.strip_prefix("0x").unwrap_or(cleaned);
         return u32::from_str_radix(stripped, 16).map(Some).map_err(|e| {
-            Error::cli(format!(
-                "E0019 sidecar `{path}` does not contain a hex literal (got {cleaned:?}): {e}"
-            ))
+            anyhow!("E0019 sidecar `{path}` does not contain a hex literal (got {cleaned:?}): {e}")
         });
     }
     let Some((layer_name, sym)) = term.split_once('.') else {
-        return Err(Error::cli(format!(
+        return Err(anyhow!(
             "E0006 patch term `{term}` is neither hex nor `<layer>.<symbol>`"
-        )));
+        ));
     };
     let load = plan
         .memory_loads
         .iter()
         .find(|m| m.layer == layer_name)
         .ok_or_else(|| {
-            Error::cli(format!(
+            anyhow!(
                 "E0006 patch term `{term}` references layer `{layer_name}` which has no memory load"
-            ))
+            )
         })?;
     if sym == "address" {
         return Ok(Some(load.address));
     }
     let _ = cfg;
     let entry = artifacts.by_layer.get(layer_name).ok_or_else(|| {
-        Error::cli(format!(
+        anyhow!(
             "E0006 patch term `{term}` references layer `{layer_name}` whose artifact is not built"
-        ))
+        )
     })?;
     let offset = entry.listing.resolve(sym).ok_or_else(|| {
-        Error::cli(format!(
+        anyhow!(
             "E0006 patch term `{term}` symbol `{sym}` not found in layer `{layer_name}`'s listing"
-        ))
+        )
     })?;
     Ok(Some(load.address.saturating_add(offset)))
 }

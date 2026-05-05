@@ -12,9 +12,9 @@ pub mod cli;
 pub mod doctor;
 pub mod error;
 pub mod graph;
-pub mod manifest;
 
 pub use sw_launcher_config as config;
+pub use sw_launcher_manifest as manifest;
 pub use sw_launcher_validate as validate;
 
 pub use sw_launcher_tool::cache;

@@ -6,9 +6,9 @@
 use std::collections::BTreeMap;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use sw_launcher::config::Config;
-use sw_launcher::manifest::{ArtifactEntry, Artifacts, LoadPlan};
-use sw_launcher::tool::Listing;
+use sw_launcher_config::Config;
+use sw_launcher_manifest::{ArtifactEntry, Artifacts, LoadPlan};
+use sw_launcher_tool::tool::Listing;
 
 fn scenario_a_toml(input_dir: &Utf8PathBuf) -> String {
     format!(
@@ -66,7 +66,7 @@ fn artifacts_for_echo(input_dir: &Utf8PathBuf) -> Artifacts {
 
 fn fixtures_dir() -> Utf8PathBuf {
     let mut p = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("tests/fixtures");
+    p.push("../../tests/fixtures");
     p
 }
 

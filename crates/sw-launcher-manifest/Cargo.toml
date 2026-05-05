@@ -1,0 +1,17 @@
+[package]
+name = "sw-launcher-manifest"
+version = "0.1.0"
+edition = "2024"
+description = "LoadPlan / Artifacts builder for sw-launcher (Config + Scenario -> cor24-run argv)"
+license = "MIT"
+repository = "https://github.com/sw-cli-tools/sw-launcher"
+
+[lib]
+name = "sw_launcher_manifest"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+camino = { workspace = true }
+sw-launcher-config = { path = "../sw-launcher-config" }
+sw-launcher-tool = { path = "../sw-launcher-tool" }

@@ -1,6 +1,6 @@
 number = 2
 slug = "sub-crate-extract-manifest"
-status = "pending"
+status = "in-progress"
 description = """
 # Step 2: sub-crate-extract-manifest
 

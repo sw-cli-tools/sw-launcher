@@ -573,6 +573,7 @@ dependencies = [
  "sha2",
  "sw-launcher-config",
  "sw-launcher-lockfile",
+ "sw-launcher-manifest",
  "sw-launcher-tool",
  "sw-launcher-validate",
  "tempfile",
@@ -601,6 +602,16 @@ dependencies = [
  "sw-launcher-tool",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "sw-launcher-manifest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "camino",
+ "sw-launcher-config",
+ "sw-launcher-tool",
 ]
 
 [[package]]
