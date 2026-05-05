@@ -1,0 +1,1 @@
+Extracted manifest into crates/sw-launcher-manifest sub-crate via git mv (lib.rs + tests/manifest_unit.rs), swapped Error::cli -> anyhow! at the public API, repointed callers through pub use. 117 tests still pass; sw-checklist 29/14 (was 26/14) with manifest.rs fn-count + resolve_patch_term LOC fails moving from main crate into the new sub-crate's per-crate budget.

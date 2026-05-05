@@ -1,6 +1,6 @@
 number = 2
 slug = "sub-crate-extract-manifest"
-status = "in-progress"
+status = "completed"
 description = """
 # Step 2: sub-crate-extract-manifest
 
@@ -8,4 +8,5 @@ Same recipe as step 1, applied to manif..."""
 role = "legacy"
 context_files = []
 created_at = "2026-05-04T09:45:52"
-commits = []
+completed_at = "2026-05-05T12:55:20"
+commits = ["0114e87cc5308228d5cf888d354d6899927c2a36"]
